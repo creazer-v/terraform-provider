@@ -1,0 +1,25 @@
+name: Monitor AWS Provider Changes
+on:
+  push:
+    paths:
+      - 'CHANGELOG.md'
+    branches:
+      - main
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  notify-changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      repository-projects: write
+    steps:
+      - name: Trigger second repository workflow
+        run: |
+          curl -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/creazer-v/terraform/dispatches \
+            -d '{"event_type": "aws-provider-update"}'
