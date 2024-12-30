@@ -5,8 +5,6 @@ on:
       - 'CHANGELOG.md'
     branches:
       - main
-  release:
-    types: [published]
   workflow_dispatch:
 
 jobs:
@@ -18,8 +16,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Fetch and filter changelog
+      - name: Fetch and filter original changelog
         run: |
+          curl -s https://raw.githubusercontent.com/hashicorp/terraform-provider-aws/main/CHANGELOG.md | \
           awk '
           BEGIN {
             printing = 0
@@ -56,7 +55,7 @@ jobs:
               print $0
             }
           }
-          ' CHANGELOG.md > db_changes.md
+          ' > db_changes.md
 
       - name: Commit changes
         run: |
