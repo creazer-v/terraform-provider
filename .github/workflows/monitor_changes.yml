@@ -12,14 +12,21 @@ on:
 jobs:
   notify-changes:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    permissions: 
+      actions: write
+      contents: write
       repository-projects: write
     steps:
       - name: Trigger second repository workflow
-        run: |
-          curl -X POST \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/creazer-v/terraform/dispatches \
-            -d '{"event_type": "aws-provider-update"}'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.repos.createDispatchEvent({
+              owner: 'creazer-v',
+              repo: 'Terraform',
+              event_type: 'aws-provider-update',
+              client_payload: {
+                source: context.repo.full_name
+              }
+            });
