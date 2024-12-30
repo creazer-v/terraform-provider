@@ -1,4 +1,4 @@
-name: Monitor AWS Provider Changes
+name: Track AWS Provider Changes
 on:
   push:
     paths:
@@ -10,23 +10,74 @@ on:
   workflow_dispatch:
 
 jobs:
-  notify-changes:
+  process-changes:
     runs-on: ubuntu-latest
-    permissions: 
-      actions: write
+    permissions:
       contents: write
-      repository-projects: write
+      issues: write
     steps:
-      - name: Trigger second repository workflow
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch and filter changelog
+        run: |
+          awk '
+          BEGIN {
+            printing = 0
+            section = ""
+          }
+          /^## [0-9]+\.[0-9]+\.[0-9]+/ {
+            print "\n" $0 "\n"
+            printing = 1
+            next
+          }
+          /^FEATURES:/ {
+            if (printing) {
+              print "\nFEATURES:"
+              section = "FEATURES"
+            }
+            next
+          }
+          /^ENHANCEMENTS:/ {
+            if (printing) {
+              print "\nENHANCEMENTS:"
+              section = "ENHANCEMENTS"
+            }
+            next
+          }
+          /^BUG FIXES:/ {
+            if (printing) {
+              print "\nBUG FIXES:"
+              section = "BUG FIXES"
+            }
+            next
+          }
+          /rds|dynamodb|docdb|[^a-zA-Z]db[^a-zA-Z]|redshift|aurora/ {
+            if (printing && section != "") {
+              print $0
+            }
+          }
+          ' CHANGELOG.md > db_changes.md
+
+      - name: Commit changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add db_changes.md
+          git commit -m "Update db_changes.md with filtered changelog entries"
+          git push
+
+      - name: Create issue if changes exist
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            await github.rest.repos.createDispatchEvent({
-              owner: 'creazer-v',
-              repo: 'Terraform',
-              event_type: 'aws-provider-update',
-              client_payload: {
-                source: context.repo.full_name
-              }
-            });
+            const fs = require('fs');
+            const changes = fs.readFileSync('db_changes.md', 'utf8');
+            if (changes.trim()) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'New Database-Related Changes Detected',
+                body: 'New database-related changes have been detected:\n\n```\n' + changes + '\n```'
+              });
+            }
