@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform/internal/configs/configschema"
 	"github.com/hashicorp/terraform/internal/dag"
 	"github.com/hashicorp/terraform/internal/lang/langrefs"
+	"github.com/hashicorp/terraform/internal/providers"
 	"github.com/hashicorp/terraform/internal/states"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
@@ -53,8 +54,7 @@ type NodeAbstractResource struct {
 	// interfaces if you're running those transforms, but also be explicitly
 	// set if you already have that information.
 
-	Schema        *configschema.Block // Schema for processing the configuration body
-	SchemaVersion uint64              // Schema version of "Schema", as decided by the provider
+	Schema *providers.Schema // Schema for processing the configuration body
 
 	// Config and RemovedConfig are mutally-exclusive, because a
 	// resource can't be both declared and removed at the same time.
@@ -87,6 +87,11 @@ type NodeAbstractResource struct {
 	generateConfigPath string
 
 	forceCreateBeforeDestroy bool
+
+	// overridePreventDestroy is set during test cleanup operations to allow
+	// tests to clean up any created infrastructure regardless of this setting
+	// in the configuration.
+	overridePreventDestroy bool
 }
 
 var (
@@ -189,7 +194,7 @@ func (n *NodeAbstractResource) References() []*addrs.Reference {
 
 		// ReferencesInBlock() requires a schema
 		if n.Schema != nil {
-			refs, _ = langrefs.ReferencesInBlock(addrs.ParseRef, c.Config, n.Schema)
+			refs, _ = langrefs.ReferencesInBlock(addrs.ParseRef, c.Config, n.Schema.Body)
 			result = append(result, refs...)
 		}
 
@@ -213,6 +218,17 @@ func (n *NodeAbstractResource) References() []*addrs.Reference {
 					log.Printf("[WARN] no schema for provisioner %q is attached to %s, so provisioner block references cannot be detected", p.Type, n.Name())
 				}
 				refs, _ = langrefs.ReferencesInBlock(addrs.ParseRef, p.Config, schema)
+				result = append(result, refs...)
+			}
+		}
+
+		if c.List != nil {
+			if c.List.IncludeResource != nil {
+				refs, _ := langrefs.ReferencesInExpr(addrs.ParseRef, c.List.IncludeResource)
+				result = append(result, refs...)
+			}
+			if c.List.Limit != nil {
+				refs, _ := langrefs.ReferencesInExpr(addrs.ParseRef, c.List.Limit)
 				result = append(result, refs...)
 			}
 		}
@@ -243,6 +259,8 @@ func (n *NodeAbstractResource) ImportReferences() []*addrs.Reference {
 		}
 
 		refs, _ := langrefs.ReferencesInExpr(addrs.ParseRef, importTarget.Config.ID)
+		result = append(result, refs...)
+		refs, _ = langrefs.ReferencesInExpr(addrs.ParseRef, importTarget.Config.Identity)
 		result = append(result, refs...)
 		refs, _ = langrefs.ReferencesInExpr(addrs.ParseRef, importTarget.Config.ForEach)
 		result = append(result, refs...)
@@ -388,9 +406,8 @@ func (n *NodeAbstractResource) AttachResourceConfig(c *configs.Resource, rc *con
 }
 
 // GraphNodeAttachResourceSchema impl
-func (n *NodeAbstractResource) AttachResourceSchema(schema *configschema.Block, version uint64) {
+func (n *NodeAbstractResource) AttachResourceSchema(schema *providers.Schema) {
 	n.Schema = schema
-	n.SchemaVersion = version
 }
 
 // GraphNodeAttachProviderMetaConfigs impl
@@ -491,12 +508,12 @@ func (n *NodeAbstractResource) readResourceInstanceState(ctx EvalContext, addr a
 		return nil, nil
 	}
 
-	schema, currentVersion := (providerSchema).SchemaForResourceAddr(addr.Resource.ContainingResource())
-	if schema == nil {
+	schema := providerSchema.SchemaForResourceAddr(addr.Resource.ContainingResource())
+	if schema.Body == nil {
 		// Shouldn't happen since we should've failed long ago if no schema is present
 		return nil, diags.Append(fmt.Errorf("no schema available for %s while reading state; this is a bug in Terraform and should be reported", addr))
 	}
-	src, upgradeDiags := upgradeResourceState(addr, provider, src, schema, currentVersion)
+	src, upgradeDiags := upgradeResourceState(addr, provider, src, schema)
 	if n.Config != nil {
 		upgradeDiags = upgradeDiags.InConfigBody(n.Config.Config, addr.String())
 	}
@@ -505,7 +522,13 @@ func (n *NodeAbstractResource) readResourceInstanceState(ctx EvalContext, addr a
 		return nil, diags
 	}
 
-	obj, err := src.Decode(schema.ImpliedType())
+	src, upgradeDiags = upgradeResourceIdentity(addr, provider, src, schema)
+	diags = diags.Append(upgradeDiags)
+	if diags.HasErrors() {
+		return nil, diags
+	}
+
+	obj, err := src.Decode(schema)
 	if err != nil {
 		diags = diags.Append(err)
 	}
@@ -536,14 +559,14 @@ func (n *NodeAbstractResource) readResourceInstanceStateDeposed(ctx EvalContext,
 		return nil, diags
 	}
 
-	schema, currentVersion := (providerSchema).SchemaForResourceAddr(addr.Resource.ContainingResource())
-	if schema == nil {
+	schema := providerSchema.SchemaForResourceAddr(addr.Resource.ContainingResource())
+	if schema.Body == nil {
 		// Shouldn't happen since we should've failed long ago if no schema is present
 		return nil, diags.Append(fmt.Errorf("no schema available for %s while reading state; this is a bug in Terraform and should be reported", addr))
 
 	}
 
-	src, upgradeDiags := upgradeResourceState(addr, provider, src, schema, currentVersion)
+	src, upgradeDiags := upgradeResourceState(addr, provider, src, schema)
 	if n.Config != nil {
 		upgradeDiags = upgradeDiags.InConfigBody(n.Config.Config, addr.String())
 	}
@@ -556,7 +579,13 @@ func (n *NodeAbstractResource) readResourceInstanceStateDeposed(ctx EvalContext,
 		return nil, diags
 	}
 
-	obj, err := src.Decode(schema.ImpliedType())
+	src, upgradeDiags = upgradeResourceIdentity(addr, provider, src, schema)
+	diags = diags.Append(upgradeDiags)
+	if diags.HasErrors() {
+		return nil, diags
+	}
+
+	obj, err := src.Decode(schema)
 	if err != nil {
 		diags = diags.Append(err)
 	}

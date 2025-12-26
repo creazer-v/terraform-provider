@@ -11,6 +11,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/convert"
 
+	"github.com/hashicorp/terraform/internal/actions"
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/checks"
 	"github.com/hashicorp/terraform/internal/configs"
@@ -57,6 +58,11 @@ type MockEvalContext struct {
 	ProviderSchemaAddr   addrs.AbsProviderConfig
 	ProviderSchemaSchema providers.ProviderSchema
 	ProviderSchemaError  error
+
+	ResourceIdentitySchemasCalled  bool
+	ResourceIdentitySchemasAddr    addrs.AbsProviderConfig
+	ResourceIdentitySchemasSchemas providers.ResourceIdentitySchemas
+	ResourceIdentitySchemasError   error
 
 	CloseProviderCalled   bool
 	CloseProviderAddr     addrs.AbsProviderConfig
@@ -161,6 +167,9 @@ type MockEvalContext struct {
 
 	ForgetCalled bool
 	ForgetValues bool
+
+	ActionsCalled bool
+	ActionsState  *actions.Actions
 }
 
 // MockEvalContext implements EvalContext
@@ -207,6 +216,12 @@ func (c *MockEvalContext) ProviderSchema(addr addrs.AbsProviderConfig) (provider
 	c.ProviderSchemaCalled = true
 	c.ProviderSchemaAddr = addr
 	return c.ProviderSchemaSchema, c.ProviderSchemaError
+}
+
+func (c *MockEvalContext) ResourceIdentitySchemas(addr addrs.AbsProviderConfig) (providers.ResourceIdentitySchemas, error) {
+	c.ResourceIdentitySchemasCalled = true
+	c.ResourceIdentitySchemasAddr = addr
+	return c.ResourceIdentitySchemasSchemas, c.ProviderSchemaError
 }
 
 func (c *MockEvalContext) CloseProvider(addr addrs.AbsProviderConfig) error {
@@ -423,4 +438,16 @@ func (c *MockEvalContext) Overrides() *mocking.Overrides {
 func (c *MockEvalContext) Forget() bool {
 	c.ForgetCalled = true
 	return c.ForgetValues
+}
+
+func (ctx *MockEvalContext) ClientCapabilities() providers.ClientCapabilities {
+	return providers.ClientCapabilities{
+		DeferralAllowed:            ctx.Deferrals().DeferralAllowed(),
+		WriteOnlyAttributesAllowed: true,
+	}
+}
+
+func (c *MockEvalContext) Actions() *actions.Actions {
+	c.ActionsCalled = true
+	return c.ActionsState
 }

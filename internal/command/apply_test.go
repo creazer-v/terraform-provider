@@ -19,6 +19,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/hashicorp/cli"
+	version "github.com/hashicorp/go-version"
+	tfaddr "github.com/hashicorp/terraform-registry-address"
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/hashicorp/terraform/internal/addrs"
@@ -37,7 +39,7 @@ func TestApply(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	statePath := testTempFile(t)
 
@@ -75,7 +77,7 @@ func TestApply_path(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	p := applyFixtureProvider()
 
@@ -105,7 +107,7 @@ func TestApply_approveNo(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	statePath := testTempFile(t)
 
@@ -148,7 +150,7 @@ func TestApply_approveYes(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	statePath := testTempFile(t)
 
@@ -195,7 +197,7 @@ func TestApply_lockedState(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	statePath := testTempFile(t)
 
@@ -234,7 +236,7 @@ func TestApply_lockedStateWait(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	statePath := testTempFile(t)
 
@@ -278,7 +280,7 @@ func TestApply_parallelism(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("parallelism"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	statePath := testTempFile(t)
 
@@ -308,7 +310,7 @@ func TestApply_parallelism(t *testing.T) {
 		provider := &testing_provider.MockProvider{}
 		provider.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 			ResourceTypes: map[string]providers.Schema{
-				name + "_instance": {Block: &configschema.Block{}},
+				name + "_instance": {Body: &configschema.Block{}},
 			},
 		}
 		provider.PlanResourceChangeFn = func(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
@@ -376,7 +378,7 @@ func TestApply_configInvalid(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply-config-invalid"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	p := testProvider()
 	view, done := testView(t)
@@ -402,7 +404,7 @@ func TestApply_defaultState(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	statePath := filepath.Join(td, DefaultStateFilename)
 
@@ -454,7 +456,7 @@ func TestApply_error(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply-error"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	statePath := testTempFile(t)
 
@@ -493,7 +495,7 @@ func TestApply_error(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"id":    {Type: cty.String, Optional: true, Computed: true},
 						"ami":   {Type: cty.String, Optional: true},
@@ -531,7 +533,7 @@ func TestApply_input(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply-input"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	// Disable test mode so input would be asked
 	test = false
@@ -581,7 +583,7 @@ func TestApply_inputPartial(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply-input-partial"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	// Disable test mode so input would be asked
 	test = false
@@ -627,7 +629,7 @@ func TestApply_noArgs(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	statePath := testTempFile(t)
 
@@ -699,6 +701,269 @@ func TestApply_plan(t *testing.T) {
 	if state == nil {
 		t.Fatal("state should not be nil")
 	}
+}
+
+// Test the ability to apply a plan file with a state store.
+//
+// The state store's details (provider, config, etc) are supplied by the plan,
+// which allows this test to not use any configuration.
+func TestApply_plan_stateStore(t *testing.T) {
+	// Disable test mode so input would be asked
+	test = false
+	defer func() { test = true }()
+
+	// Set some default reader/writers for the inputs
+	defaultInputReader = new(bytes.Buffer)
+	defaultInputWriter = new(bytes.Buffer)
+
+	// Create the plan file that includes a state store
+	ver := version.Must(version.NewVersion("1.2.3"))
+	providerCfg := cty.ObjectVal(map[string]cty.Value{
+		"region": cty.StringVal("spain"),
+	})
+	providerCfgRaw, err := plans.NewDynamicValue(providerCfg, providerCfg.Type())
+	if err != nil {
+		t.Fatal(err)
+	}
+	storeCfg := cty.ObjectVal(map[string]cty.Value{
+		"value": cty.StringVal("foobar"),
+	})
+	storeCfgRaw, err := plans.NewDynamicValue(storeCfg, storeCfg.Type())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plan := &plans.Plan{
+		Changes: plans.NewChangesSrc(),
+
+		// We'll default to the fake plan being both applyable and complete,
+		// since that's what most tests expect. Tests can override these
+		// back to false again afterwards if they need to.
+		Applyable: true,
+		Complete:  true,
+
+		StateStore: &plans.StateStore{
+			Type: "test_store",
+			Provider: &plans.Provider{
+				Version: ver,
+				Source: &tfaddr.Provider{
+					Hostname:  tfaddr.DefaultProviderRegistryHost,
+					Namespace: "hashicorp",
+					Type:      "test",
+				},
+				Config: providerCfgRaw,
+			},
+			Config:    storeCfgRaw,
+			Workspace: "default",
+		},
+	}
+
+	// Create a plan file on disk
+	//
+	// In this process we create a plan file describing the creation of a test_instance.foo resource.
+	state := testState() // State describes
+	_, snap := testModuleWithSnapshot(t, "apply")
+	planPath := testPlanFile(t, snap, state, plan)
+
+	// Create a mock, to be used as the pluggable state store described in the planfile
+	mock := testStateStoreMockWithChunkNegotiation(t, 1000)
+	view, done := testView(t)
+	c := &ApplyCommand{
+		Meta: Meta{
+			testingOverrides: &testingOverrides{
+				Providers: map[addrs.Provider]providers.Factory{
+					addrs.NewDefaultProvider("test"): providers.FactoryFixed(mock),
+				},
+			},
+			View: view,
+		},
+	}
+
+	args := []string{
+		planPath,
+	}
+	code := c.Run(args)
+	output := done(t)
+	if code != 0 {
+		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
+	}
+
+	if !mock.WriteStateBytesCalled {
+		t.Fatal("expected the test to write new state when applying the plan, but WriteStateBytesCalled is false on the mock provider.")
+	}
+}
+
+// Test unhappy paths when applying a plan file describing a state store.
+func TestApply_plan_stateStore_errorCases(t *testing.T) {
+	// Disable test mode so input would be asked
+	test = false
+	defer func() { test = true }()
+
+	t.Run("error when the provider doesn't include the state store named in the plan", func(t *testing.T) {
+		// Set some default reader/writers for the inputs
+		defaultInputReader = new(bytes.Buffer)
+		defaultInputWriter = new(bytes.Buffer)
+
+		// Create the plan file that includes a state store
+		ver := version.Must(version.NewVersion("1.2.3"))
+		providerCfg := cty.ObjectVal(map[string]cty.Value{
+			"region": cty.StringVal("spain"),
+		})
+		providerCfgRaw, err := plans.NewDynamicValue(providerCfg, providerCfg.Type())
+		if err != nil {
+			t.Fatal(err)
+		}
+		storeCfg := cty.ObjectVal(map[string]cty.Value{
+			"value": cty.StringVal("foobar"),
+		})
+		storeCfgRaw, err := plans.NewDynamicValue(storeCfg, storeCfg.Type())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		plan := &plans.Plan{
+			Changes: plans.NewChangesSrc(),
+
+			// We'll default to the fake plan being both applyable and complete,
+			// since that's what most tests expect. Tests can override these
+			// back to false again afterwards if they need to.
+			Applyable: true,
+			Complete:  true,
+
+			StateStore: &plans.StateStore{
+				Type: "test_doesnt_exist", // Mismatched with test_store in the provider
+				Provider: &plans.Provider{
+					Version: ver,
+					Source: &tfaddr.Provider{
+						Hostname:  tfaddr.DefaultProviderRegistryHost,
+						Namespace: "hashicorp",
+						Type:      "test",
+					},
+					Config: providerCfgRaw,
+				},
+				Config:    storeCfgRaw,
+				Workspace: "default",
+			},
+		}
+
+		// Create a plan file on disk
+		//
+		// In this process we create a plan file describing the creation of a test_instance.foo resource.
+		state := testState() // State describes
+		_, snap := testModuleWithSnapshot(t, "apply")
+		planPath := testPlanFile(t, snap, state, plan)
+
+		// Create a mock, to be used as the pluggable state store described in the planfile
+		mock := testStateStoreMockWithChunkNegotiation(t, 1000)
+		view, done := testView(t)
+		c := &ApplyCommand{
+			Meta: Meta{
+				testingOverrides: &testingOverrides{
+					Providers: map[addrs.Provider]providers.Factory{
+						addrs.NewDefaultProvider("test"): providers.FactoryFixed(mock),
+					},
+				},
+				View: view,
+			},
+		}
+
+		args := []string{
+			planPath,
+			"-no-color",
+		}
+		code := c.Run(args)
+		output := done(t)
+		if code != 1 {
+			t.Fatalf("expected an error but got none: %d\n\n%s", code, output.Stdout())
+		}
+		expectedErr := "Error: State store not implemented by the provider"
+		if !strings.Contains(output.Stderr(), expectedErr) {
+			t.Fatalf("expected error to include %q, but got:\n%s", expectedErr, output.Stderr())
+		}
+	})
+
+	t.Run("error when the provider doesn't implement state stores", func(t *testing.T) {
+		// Set some default reader/writers for the inputs
+		defaultInputReader = new(bytes.Buffer)
+		defaultInputWriter = new(bytes.Buffer)
+
+		// Create the plan file that includes a state store
+		ver := version.Must(version.NewVersion("1.2.3"))
+		providerCfg := cty.ObjectVal(map[string]cty.Value{
+			"region": cty.StringVal("spain"),
+		})
+		providerCfgRaw, err := plans.NewDynamicValue(providerCfg, providerCfg.Type())
+		if err != nil {
+			t.Fatal(err)
+		}
+		storeCfg := cty.ObjectVal(map[string]cty.Value{
+			"value": cty.StringVal("foobar"),
+		})
+		storeCfgRaw, err := plans.NewDynamicValue(storeCfg, storeCfg.Type())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		plan := &plans.Plan{
+			Changes: plans.NewChangesSrc(),
+
+			// We'll default to the fake plan being both applyable and complete,
+			// since that's what most tests expect. Tests can override these
+			// back to false again afterwards if they need to.
+			Applyable: true,
+			Complete:  true,
+
+			StateStore: &plans.StateStore{
+				Type: "test_store",
+				Provider: &plans.Provider{
+					Version: ver,
+					Source: &tfaddr.Provider{
+						Hostname:  tfaddr.DefaultProviderRegistryHost,
+						Namespace: "hashicorp",
+						Type:      "test",
+					},
+					Config: providerCfgRaw,
+				},
+				Config:    storeCfgRaw,
+				Workspace: "default",
+			},
+		}
+
+		// Create a plan file on disk
+		//
+		// In this process we create a plan file describing the creation of a test_instance.foo resource.
+		state := testState() // State describes
+		_, snap := testModuleWithSnapshot(t, "apply")
+		planPath := testPlanFile(t, snap, state, plan)
+
+		// Create a mock, to be used as the pluggable state store described in the planfile
+		mock := &testing_provider.MockProvider{}
+		view, done := testView(t)
+		c := &ApplyCommand{
+			Meta: Meta{
+				testingOverrides: &testingOverrides{
+					Providers: map[addrs.Provider]providers.Factory{
+						addrs.NewDefaultProvider("test"): providers.FactoryFixed(mock),
+					},
+				},
+				View: view,
+			},
+		}
+
+		args := []string{
+			planPath,
+			"-no-color",
+		}
+		code := c.Run(args)
+		output := done(t)
+		if code != 1 {
+			t.Fatalf("expected an error but got none: %d\n\n%s", code, output.Stdout())
+		}
+		expectedErr := "Error: Provider does not support pluggable state storage"
+		if !strings.Contains(output.Stderr(), expectedErr) {
+			t.Fatalf("expected error to include %q, but got:\n%s", expectedErr, output.Stderr())
+		}
+	})
 }
 
 func TestApply_plan_backup(t *testing.T) {
@@ -782,7 +1047,8 @@ func TestApply_plan_remoteState(t *testing.T) {
 	// Disable test mode so input would be asked
 	test = false
 	defer func() { test = true }()
-	tmp := testCwd(t)
+	tmp := t.TempDir()
+	t.Chdir(tmp)
 	remoteStatePath := filepath.Join(tmp, DefaultDataDir, DefaultStateFilename)
 	if err := os.MkdirAll(filepath.Dir(remoteStatePath), 0755); err != nil {
 		t.Fatalf("err: %s", err)
@@ -820,7 +1086,7 @@ func TestApply_plan_remoteState(t *testing.T) {
 		t.Fatal(err)
 	}
 	planPath := testPlanFile(t, snap, state, &plans.Plan{
-		Backend: plans.Backend{
+		Backend: &plans.Backend{
 			Type:   "http",
 			Config: backendConfigRaw,
 		},
@@ -881,7 +1147,7 @@ func TestApply_planWithVarFile(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"id":    {Type: cty.String, Computed: true},
 						"value": {Type: cty.String, Optional: true},
@@ -991,6 +1257,136 @@ func TestApply_planUndeclaredVars(t *testing.T) {
 	output := done(t)
 	if code == 0 {
 		t.Fatal("should've failed: ", output.Stdout())
+	}
+}
+
+func TestApply_planWithEnvVars(t *testing.T) {
+	_, snap := testModuleWithSnapshot(t, "apply-output-only")
+	plan := testPlan(t)
+
+	addr, diags := addrs.ParseAbsOutputValueStr("output.shadow")
+	if diags.HasErrors() {
+		t.Fatal(diags.Err())
+	}
+
+	shadowVal := mustNewDynamicValue("noot", cty.DynamicPseudoType)
+	plan.VariableValues = map[string]plans.DynamicValue{
+		"shadow": shadowVal,
+	}
+	plan.Changes.Outputs = append(plan.Changes.Outputs, &plans.OutputChangeSrc{
+		Addr: addr,
+		ChangeSrc: plans.ChangeSrc{
+			Action: plans.Create,
+			After:  shadowVal,
+		},
+	})
+	planPath := testPlanFileMatchState(
+		t,
+		snap,
+		states.NewState(),
+		plan,
+		statemgr.SnapshotMeta{},
+	)
+
+	statePath := testTempFile(t)
+
+	p := applyFixtureProvider()
+	view, done := testView(t)
+	c := &ApplyCommand{
+		Meta: Meta{
+			testingOverrides: metaOverridesForProvider(p),
+			View:             view,
+		},
+	}
+
+	t.Setenv("TF_VAR_shadow", "env")
+
+	args := []string{
+		"-state", statePath,
+		"-no-color",
+		planPath,
+	}
+	code := c.Run(args)
+	output := done(t)
+	if code != 0 {
+		t.Fatal("unexpected failure: ", output.All())
+	}
+
+	expectedWarn := "Warning: Ignoring variable when applying a saved plan\n"
+	if !strings.Contains(output.Stdout(), expectedWarn) {
+		t.Fatalf("expected warning in output, given: %q", output.Stdout())
+	}
+}
+
+func TestApply_planWithSensitiveEnvVars(t *testing.T) {
+	_, snap := testModuleWithSnapshot(t, "apply-sensitive-variable")
+	plan := testPlan(t)
+
+	addr, diags := addrs.ParseAbsOutputValueStr("output.shadow")
+	if diags.HasErrors() {
+		t.Fatal(diags.Err())
+	}
+
+	shadowVal := mustNewDynamicValue("noot", cty.DynamicPseudoType)
+	plan.VariableValues = map[string]plans.DynamicValue{
+		"shadow": shadowVal,
+	}
+	plan.Changes.Outputs = append(plan.Changes.Outputs, &plans.OutputChangeSrc{
+		Addr: addr,
+		ChangeSrc: plans.ChangeSrc{
+			Action: plans.Create,
+			After:  shadowVal,
+		},
+	})
+	planPath := testPlanFileMatchState(
+		t,
+		snap,
+		states.NewState(),
+		plan,
+		statemgr.SnapshotMeta{},
+	)
+
+	statePath := testTempFile(t)
+
+	p := applyFixtureProvider()
+	view, done := testView(t)
+	c := &ApplyCommand{
+		Meta: Meta{
+			testingOverrides: metaOverridesForProvider(p),
+			View:             view,
+		},
+	}
+
+	t.Setenv("TF_VAR_shadow", "unique")
+
+	args := []string{
+		"-state", statePath,
+		"-no-color",
+		planPath,
+	}
+	code := c.Run(args)
+	output := done(t)
+	if code != 0 {
+		t.Fatal("unexpected failure: ", output.All())
+	}
+
+	out := output.Stdout()
+
+	expectedWarn := "Warning: Ignoring variable when applying a saved plan\n"
+	if !strings.Contains(out, expectedWarn) {
+		t.Fatalf("expected warning in output, given: %q", out)
+	}
+
+	if !strings.Contains(out, "(sensitive value)") {
+		t.Error("should have elided sensitive value")
+	}
+
+	if strings.Contains(out, "noot") {
+		t.Error("should have elided sensitive input, but contained value")
+	}
+
+	if strings.Contains(out, "unique") {
+		t.Error("should have elided sensitive input, but contained value")
 	}
 }
 
@@ -1191,7 +1587,7 @@ foo = "bar"
 		t.Run(name, func(t *testing.T) {
 			td := t.TempDir()
 			testCopyDir(t, testFixturePath("apply-ephemeral-variable"), td)
-			defer testChdir(t, td)()
+			t.Chdir(td)
 
 			_, snap := testModuleWithSnapshot(t, "apply-ephemeral-variable")
 			plannedVal := cty.ObjectVal(map[string]cty.Value{
@@ -1365,7 +1761,7 @@ func TestApply_changedVars_applyTime(t *testing.T) {
 		// var files.
 		td := t.TempDir()
 		testCopyDir(t, testFixturePath("apply-vars-auto"), td)
-		defer testChdir(t, td)()
+		t.Chdir(td)
 
 		p := planVarsFixtureProvider()
 		view, done := testView(t)
@@ -1411,7 +1807,7 @@ func TestApply_planNoModuleFiles(t *testing.T) {
 	td := testTempDir(t)
 	defer os.RemoveAll(td)
 
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	p := applyFixtureProvider()
 	planPath := applyFixturePlanFile(t)
@@ -1434,7 +1830,7 @@ func TestApply_refresh(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	originalState := states.BuildState(func(s *states.SyncState) {
 		s.SetResourceInstanceCurrent(
@@ -1501,7 +1897,7 @@ func TestApply_refreshFalse(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	originalState := states.BuildState(func(s *states.SyncState) {
 		s.SetResourceInstanceCurrent(
@@ -1550,7 +1946,7 @@ func TestApply_shutdown(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply-shutdown"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	cancelled := make(chan struct{})
 	shutdownCh := make(chan struct{})
@@ -1599,7 +1995,7 @@ func TestApply_shutdown(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"ami": {Type: cty.String, Optional: true},
 					},
@@ -1638,7 +2034,7 @@ func TestApply_state(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	originalState := states.BuildState(func(s *states.SyncState) {
 		s.SetResourceInstanceCurrent(
@@ -1732,7 +2128,7 @@ func TestApply_stateNoExist(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	p := applyFixtureProvider()
 	view, done := testView(t)
@@ -1757,7 +2153,7 @@ func TestApply_sensitiveOutput(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply-sensitive-output"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	p := testProvider()
 	view, done := testView(t)
@@ -1794,7 +2190,7 @@ func TestApply_vars(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply-vars"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	statePath := testTempFile(t)
 
@@ -1811,7 +2207,7 @@ func TestApply_vars(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"value": {Type: cty.String, Optional: true},
 					},
@@ -1851,7 +2247,7 @@ func TestApply_varFile(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply-vars"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	varFilePath := testTempFile(t)
 	if err := ioutil.WriteFile(varFilePath, []byte(applyVarFile), 0644); err != nil {
@@ -1873,7 +2269,7 @@ func TestApply_varFile(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"value": {Type: cty.String, Optional: true},
 					},
@@ -1913,7 +2309,7 @@ func TestApply_varFileDefault(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply-vars"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	varFilePath := filepath.Join(td, "terraform.tfvars")
 	if err := os.WriteFile(varFilePath, []byte(applyVarFile), 0644); err != nil {
@@ -1935,7 +2331,7 @@ func TestApply_varFileDefault(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"value": {Type: cty.String, Optional: true},
 					},
@@ -1974,7 +2370,7 @@ func TestApply_varFileDefaultJSON(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply-vars"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	varFilePath := filepath.Join(td, "terraform.tfvars.json")
 	if err := ioutil.WriteFile(varFilePath, []byte(applyVarFileJSON), 0644); err != nil {
@@ -1996,7 +2392,7 @@ func TestApply_varFileDefaultJSON(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"value": {Type: cty.String, Optional: true},
 					},
@@ -2035,7 +2431,7 @@ func TestApply_backup(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	originalState := states.BuildState(func(s *states.SyncState) {
 		s.SetResourceInstanceCurrent(
@@ -2112,7 +2508,7 @@ func TestApply_disableBackup(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	originalState := testState()
 	statePath := testStateFile(t, originalState)
@@ -2191,7 +2587,7 @@ func TestApply_terraformEnv(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply-terraform-env"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	statePath := testTempFile(t)
 
@@ -2228,7 +2624,7 @@ func TestApply_terraformEnvNonDefault(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply-terraform-env"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	// Create new env
 	{
@@ -2289,13 +2685,13 @@ output = test
 func TestApply_targeted(t *testing.T) {
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply-targeted"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	p := testProvider()
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"id": {Type: cty.String, Computed: true},
 					},
@@ -2344,7 +2740,7 @@ func TestApply_targetFlagsDiags(t *testing.T) {
 		t.Run(target, func(t *testing.T) {
 			td := testTempDir(t)
 			defer os.RemoveAll(td)
-			defer testChdir(t, td)()
+			t.Chdir(td)
 
 			view, done := testView(t)
 			c := &ApplyCommand{
@@ -2377,7 +2773,7 @@ func TestApply_targetFlagsDiags(t *testing.T) {
 func TestApply_replace(t *testing.T) {
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply-replace"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	originalState := states.BuildState(func(s *states.SyncState) {
 		s.SetResourceInstanceCurrent(
@@ -2402,7 +2798,7 @@ func TestApply_replace(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"id": {Type: cty.String, Computed: true},
 					},
@@ -2464,7 +2860,7 @@ func TestApply_pluginPath(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	statePath := testTempFile(t)
 
@@ -2504,7 +2900,7 @@ func TestApply_jsonGoldenReference(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	statePath := testTempFile(t)
 
@@ -2545,7 +2941,7 @@ func TestApply_warnings(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("apply"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	p := testProvider()
 	p.GetProviderSchemaResponse = applyFixtureSchema()
@@ -2625,7 +3021,7 @@ func applyFixtureSchema() *providers.GetProviderSchemaResponse {
 	return &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"id":  {Type: cty.String, Optional: true, Computed: true},
 						"ami": {Type: cty.String, Optional: true},
@@ -2769,4 +3165,73 @@ func mustNewDynamicValue(val string, ty cty.Type) plans.DynamicValue {
 		panic(err)
 	}
 	return ret
+}
+
+func TestProviderInconsistentFileFunc(t *testing.T) {
+	// Verify that providers can still accept inconsistent results from
+	// filesystem functions. We allow this for backwards compatibility, but
+	// ephemeral values should be used in the long-term to allow for controlled
+	// changes in values between plan and apply.
+	td := t.TempDir()
+	planDir := filepath.Join(td, "plan")
+	applyDir := filepath.Join(td, "apply")
+	testCopyDir(t, testFixturePath("changed-file-func-plan"), planDir)
+	testCopyDir(t, testFixturePath("changed-file-func-apply"), applyDir)
+	t.Chdir(planDir)
+
+	p := planVarsFixtureProvider()
+	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
+		Provider: providers.Schema{
+			Body: &configschema.Block{
+				Attributes: map[string]*configschema.Attribute{
+					"foo": {Type: cty.String, Optional: true},
+				},
+			},
+		},
+		ResourceTypes: map[string]providers.Schema{
+			"test_instance": {
+				Body: &configschema.Block{
+					Attributes: map[string]*configschema.Attribute{
+						"id": {Type: cty.String, Optional: true, Computed: true},
+					},
+				},
+			},
+		},
+	}
+
+	view, done := testView(t)
+	c := &PlanCommand{
+		Meta: Meta{
+			testingOverrides: metaOverridesForProvider(p),
+			View:             view,
+		},
+	}
+
+	args := []string{
+		"-out", filepath.Join(applyDir, "planfile"),
+	}
+	code := c.Run(args)
+	output := done(t)
+	if code != 0 {
+		t.Fatalf("non-zero exit %d\n\n%s", code, output.Stderr())
+	}
+
+	t.Chdir(applyDir)
+
+	view, done = testView(t)
+	apply := &ApplyCommand{
+		Meta: Meta{
+			testingOverrides: metaOverridesForProvider(p),
+			Ui:               new(cli.MockUi),
+			View:             view,
+		},
+	}
+	args = []string{
+		"planfile",
+	}
+	code = apply.Run(args)
+	output = done(t)
+	if code != 0 {
+		t.Fatalf("non-zero exit %d\n\n%s", code, output.Stderr())
+	}
 }

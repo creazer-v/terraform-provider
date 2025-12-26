@@ -6,6 +6,7 @@ package terraform
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,7 +15,9 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/hashicorp/hcl/v2"
+
 	"github.com/hashicorp/terraform/internal/addrs"
+	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
 	"github.com/hashicorp/terraform/internal/providers"
 	testing_provider "github.com/hashicorp/terraform/internal/providers/testing"
@@ -121,7 +124,7 @@ func TestContext2Validate_computedVar(t *testing.T) {
 	p := testProvider("aws")
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		Provider: providers.Schema{
-			Block: &configschema.Block{
+			Body: &configschema.Block{
 				Attributes: map[string]*configschema.Attribute{
 					"value": {Type: cty.String, Optional: true},
 				},
@@ -129,7 +132,7 @@ func TestContext2Validate_computedVar(t *testing.T) {
 		},
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{},
 				},
 			},
@@ -139,7 +142,7 @@ func TestContext2Validate_computedVar(t *testing.T) {
 	pt.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"id":    {Type: cty.String, Computed: true},
 						"value": {Type: cty.String, Optional: true},
@@ -180,7 +183,7 @@ func TestContext2Validate_computedInFunction(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"attr": {Type: cty.Number, Optional: true},
 					},
@@ -189,7 +192,7 @@ func TestContext2Validate_computedInFunction(t *testing.T) {
 		},
 		DataSources: map[string]providers.Schema{
 			"aws_data_source": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"optional_attr": {Type: cty.String, Optional: true},
 						"computed":      {Type: cty.String, Computed: true},
@@ -220,14 +223,14 @@ func TestContext2Validate_countComputed(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{},
 				},
 			},
 		},
 		DataSources: map[string]providers.Schema{
 			"aws_data_source": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"compute": {Type: cty.String, Optional: true},
 						"value":   {Type: cty.String, Computed: true},
@@ -255,7 +258,7 @@ func TestContext2Validate_countNegative(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{},
 				},
 			},
@@ -279,7 +282,7 @@ func TestContext2Validate_countVariable(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"foo": {Type: cty.String, Optional: true},
 					},
@@ -306,7 +309,7 @@ func TestContext2Validate_countVariableNoDefault(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"foo": {Type: cty.String, Optional: true},
 					},
@@ -319,7 +322,7 @@ func TestContext2Validate_countVariableNoDefault(t *testing.T) {
 			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
 		},
 	})
-	assertNoDiagnostics(t, diags)
+	tfdiags.AssertNoDiagnostics(t, diags)
 
 	_, diags = c.Plan(m, nil, &PlanOpts{})
 	if !diags.HasErrors() {
@@ -333,7 +336,7 @@ func TestContext2Validate_moduleBadOutput(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"foo": {Type: cty.String, Optional: true},
 					},
@@ -359,7 +362,7 @@ func TestContext2Validate_moduleGood(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"foo": {Type: cty.String, Optional: true},
 					},
@@ -386,7 +389,7 @@ func TestContext2Validate_moduleBadResource(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{},
 				},
 			},
@@ -415,7 +418,7 @@ func TestContext2Validate_moduleDepsShouldNotCycle(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"id": {Type: cty.String, Optional: true},
 					},
@@ -441,7 +444,7 @@ func TestContext2Validate_moduleProviderVar(t *testing.T) {
 	p := testProvider("aws")
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		Provider: providers.Schema{
-			Block: &configschema.Block{
+			Body: &configschema.Block{
 				Attributes: map[string]*configschema.Attribute{
 					"foo": {Type: cty.String, Optional: true},
 				},
@@ -449,7 +452,7 @@ func TestContext2Validate_moduleProviderVar(t *testing.T) {
 		},
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"foo": {Type: cty.String, Optional: true},
 					},
@@ -482,7 +485,7 @@ func TestContext2Validate_moduleProviderInheritUnused(t *testing.T) {
 	p := testProvider("aws")
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		Provider: providers.Schema{
-			Block: &configschema.Block{
+			Body: &configschema.Block{
 				Attributes: map[string]*configschema.Attribute{
 					"foo": {Type: cty.String, Optional: true},
 				},
@@ -490,7 +493,7 @@ func TestContext2Validate_moduleProviderInheritUnused(t *testing.T) {
 		},
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"foo": {Type: cty.String, Optional: true},
 					},
@@ -523,7 +526,7 @@ func TestContext2Validate_orphans(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"foo": {Type: cty.String, Optional: true},
 						"num": {Type: cty.String, Optional: true},
@@ -562,7 +565,7 @@ func TestContext2Validate_providerConfig_bad(t *testing.T) {
 	p := testProvider("aws")
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		Provider: providers.Schema{
-			Block: &configschema.Block{
+			Body: &configschema.Block{
 				Attributes: map[string]*configschema.Attribute{
 					"foo": {Type: cty.String, Optional: true},
 				},
@@ -570,7 +573,7 @@ func TestContext2Validate_providerConfig_bad(t *testing.T) {
 		},
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{},
 				},
 			},
@@ -601,7 +604,7 @@ func TestContext2Validate_providerConfig_skippedEmpty(t *testing.T) {
 	p := testProvider("aws")
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		Provider: providers.Schema{
-			Block: &configschema.Block{
+			Body: &configschema.Block{
 				Attributes: map[string]*configschema.Attribute{
 					"foo": {Type: cty.String, Optional: true},
 				},
@@ -609,7 +612,7 @@ func TestContext2Validate_providerConfig_skippedEmpty(t *testing.T) {
 		},
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{},
 				},
 			},
@@ -637,7 +640,7 @@ func TestContext2Validate_providerConfig_good(t *testing.T) {
 	p := testProvider("aws")
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		Provider: providers.Schema{
-			Block: &configschema.Block{
+			Body: &configschema.Block{
 				Attributes: map[string]*configschema.Attribute{
 					"foo": {Type: cty.String, Optional: true},
 				},
@@ -645,7 +648,7 @@ func TestContext2Validate_providerConfig_good(t *testing.T) {
 		},
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{},
 				},
 			},
@@ -672,7 +675,7 @@ func TestContext2Validate_requiredProviderConfig(t *testing.T) {
 
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		Provider: providers.Schema{
-			Block: &configschema.Block{
+			Body: &configschema.Block{
 				Attributes: map[string]*configschema.Attribute{
 					"required_attribute": {Type: cty.String, Required: true},
 				},
@@ -680,7 +683,7 @@ func TestContext2Validate_requiredProviderConfig(t *testing.T) {
 		},
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{},
 				},
 			},
@@ -705,7 +708,7 @@ func TestContext2Validate_provisionerConfig_bad(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"foo": {Type: cty.String, Optional: true},
 					},
@@ -741,7 +744,7 @@ func TestContext2Validate_badResourceConnection(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"foo": {Type: cty.String, Optional: true},
 					},
@@ -774,7 +777,7 @@ func TestContext2Validate_badProvisionerConnection(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"foo": {Type: cty.String, Optional: true},
 					},
@@ -806,7 +809,7 @@ func TestContext2Validate_provisionerConfig_good(t *testing.T) {
 	p := testProvider("aws")
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		Provider: providers.Schema{
-			Block: &configschema.Block{
+			Body: &configschema.Block{
 				Attributes: map[string]*configschema.Attribute{
 					"foo": {Type: cty.String, Optional: true},
 				},
@@ -814,7 +817,7 @@ func TestContext2Validate_provisionerConfig_good(t *testing.T) {
 		},
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"foo": {Type: cty.String, Optional: true},
 					},
@@ -855,7 +858,7 @@ func TestContext2Validate_requiredVar(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"ami": {Type: cty.String, Optional: true},
 					},
@@ -868,7 +871,7 @@ func TestContext2Validate_requiredVar(t *testing.T) {
 			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
 		},
 	})
-	assertNoDiagnostics(t, diags)
+	tfdiags.AssertNoDiagnostics(t, diags)
 
 	// NOTE: This test has grown idiosyncratic because originally Terraform
 	// would (optionally) check variables during validation, and then in
@@ -891,7 +894,7 @@ func TestContext2Validate_resourceConfig_bad(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"foo": {Type: cty.String, Optional: true},
 					},
@@ -921,7 +924,7 @@ func TestContext2Validate_resourceConfig_good(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"foo": {Type: cty.String, Optional: true},
 					},
@@ -946,7 +949,7 @@ func TestContext2Validate_tainted(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"foo": {Type: cty.String, Optional: true},
 						"num": {Type: cty.String, Optional: true},
@@ -986,7 +989,7 @@ func TestContext2Validate_targetedDestroy(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"foo": {Type: cty.String, Optional: true},
 						"num": {Type: cty.String, Optional: true},
@@ -1022,7 +1025,7 @@ func TestContext2Validate_varRefUnknown(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"foo": {Type: cty.String, Optional: true},
 					},
@@ -1062,7 +1065,7 @@ func TestContext2Validate_interpolateVar(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"template_file": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"template": {Type: cty.String, Optional: true},
 					},
@@ -1094,7 +1097,7 @@ func TestContext2Validate_interpolateComputedModuleVarDef(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"attr": {Type: cty.String, Optional: true},
 					},
@@ -1778,7 +1781,7 @@ resource "test_instance" "a" {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"id": {Type: cty.String, Computed: true},
 					},
@@ -1819,7 +1822,7 @@ func TestContext2Validate_sensitiveProvisionerConfig(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"aws_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"foo": {Type: cty.String, Optional: true},
 					},
@@ -2704,7 +2707,7 @@ output "result" {
 		if !diags.HasErrors() {
 			t.Fatal("unexpected success")
 		}
-		if got, want := diags.Err().Error(), "Invalid function argument: Invalid value for \"string\" parameter: string required."; !strings.Contains(got, want) {
+		if got, want := diags.Err().Error(), "Invalid function argument: Invalid value for \"string\" parameter: string required, but have tuple."; !strings.Contains(got, want) {
 			t.Errorf("wrong error message\nwant substring: %s\ngot: %s", want, got)
 		}
 	})
@@ -2920,7 +2923,7 @@ resource "bar_instance" "test" {
 	provider := &testing_provider.MockProvider{
 		GetProviderSchemaResponse: &providers.GetProviderSchemaResponse{
 			Provider: providers.Schema{
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						// We have a required attribute that is not set, we're
 						// expecting this to not matter as we shouldn't validate
@@ -2935,7 +2938,7 @@ resource "bar_instance" "test" {
 			},
 			ResourceTypes: map[string]providers.Schema{
 				"bar_instance": {
-					Block: &configschema.Block{
+					Body: &configschema.Block{
 						Attributes: map[string]*configschema.Attribute{
 							// We should still validate this attribute as being
 							// incorrect, even though we have an external
@@ -2957,7 +2960,7 @@ resource "bar_instance" "test" {
 			providerAddr: *provider.GetProviderSchemaResponse,
 		},
 	})
-	assertNoDiagnostics(t, diags)
+	tfdiags.AssertNoDiagnostics(t, diags)
 
 	// Many of the MockProvider methods check for this, so we'll set it to be
 	// true externally.
@@ -3006,7 +3009,7 @@ output "foo" {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"id": {Type: cty.String, Computed: true},
 					},
@@ -3064,7 +3067,7 @@ output "test" {
 			},
 		},
 	)
-	assertDiagnosticsMatch(t, diags, wantDiags)
+	tfdiags.AssertDiagnosticsMatch(t, diags, wantDiags)
 }
 
 func TestContext2Validate_ephemeralOutput_child(t *testing.T) {
@@ -3092,5 +3095,754 @@ module "child" {
 
 	ctx := testContext2(t, &ContextOpts{})
 	diags := ctx.Validate(m, &ValidateOpts{})
-	assertNoDiagnostics(t, diags)
+	tfdiags.AssertNoDiagnostics(t, diags)
+}
+
+func TestContext2Validate_queryList(t *testing.T) {
+	cases := []struct {
+		name           string
+		mainConfig     string
+		extraConfig    map[string]string
+		queryConfig    string
+		diagCount      int
+		expectedErrMsg []string
+	}{
+		{
+			name: "valid simple block",
+			mainConfig: `
+				terraform {	
+					required_providers {
+						test = {
+							source = "hashicorp/test"
+							version = "1.0.0"
+						}
+					}
+				}
+				`,
+			queryConfig: `
+				variable "input" {
+					type = string
+					default = "foo"
+				}
+
+				list "test_resource" "test" {
+					provider = test
+				}
+				`,
+		},
+		{
+			name: "valid list reference",
+			mainConfig: `
+				terraform {	
+					required_providers {
+						test = {
+							source = "hashicorp/test"
+							version = "1.0.0"
+						}
+					}
+				}
+				`,
+			queryConfig: `
+				variable "input" {
+					type = string
+					default = "foo"
+				}
+
+				list "test_resource" "test" {
+					provider = test
+
+					config {
+						filter = {
+							attr = var.input
+						}
+					}
+				}
+
+				list "test_resource" "test2" {
+					provider = test
+					
+					config {
+						filter = {
+							attr = list.test_resource.test.data[0].state.instance_type
+						}
+					}
+				}
+				`,
+		},
+		{
+			name: "valid list instance reference",
+			mainConfig: `
+				terraform {	
+					required_providers {
+						test = {
+							source = "hashicorp/test"
+							version = "1.0.0"
+						}
+					}
+				}
+				`,
+			queryConfig: `
+				variable "input" {
+					type = string
+					default = "foo"
+				}
+
+				list "test_resource" "test" {
+				    count = 1
+					provider = test
+
+					config {
+						filter = {
+							attr = var.input
+						}
+					}
+				}
+
+				list "test_resource" "test2" {
+					provider = test
+					
+					config {
+						filter = {
+							attr = list.test_resource.test[0].data[0].state.instance_type
+						}
+					}
+				}
+				`,
+		},
+		{
+			name: "invalid list result's attribute reference",
+			mainConfig: `
+				terraform {	
+					required_providers {
+						test = {
+							source = "hashicorp/test"
+							version = "1.0.0"
+						}
+					}
+				}
+				`,
+			queryConfig: `
+				variable "input" {
+					type = string
+					default = "foo"
+				}
+
+				list "test_resource" "test" {
+					provider = test
+
+					config {
+						filter = {
+							attr = var.input
+						}
+					}
+				}
+
+				list "test_resource" "test2" {
+					provider = test
+					
+					config {
+						filter = {
+							attr = list.test_resource.test.state.instance_type
+						}
+					}
+				}
+				`,
+			diagCount: 1,
+			expectedErrMsg: []string{
+				"Invalid list resource traversal",
+				"The first step in the traversal for a list resource must be an attribute \"data\"",
+			},
+		},
+		{
+			// We tried to reference a resource of type list without using the fully-qualified name.
+			// The error contains a hint to help the user.
+			name: "reference list block from resource",
+			mainConfig: `
+				terraform {	
+					required_providers {
+						test = {
+							source = "hashicorp/test"
+							version = "1.0.0"
+						}
+					}
+				}
+
+				resource "list" "test_resource1" {
+					provider = test
+				}
+
+				resource "list" "test_resource2" {
+					provider = test
+					attr = list.test_resource1.attr
+				}
+				`,
+			queryConfig: `
+				variable "input" {
+					type = string
+					default = "foo"
+				}
+
+				list "test_resource" "test" {
+					provider = test
+
+					config {
+						filter = {
+							attr = var.input
+						}
+					}
+				}
+				`,
+			diagCount: 1,
+			expectedErrMsg: []string{
+				"Reference to undeclared resource",
+				"A list resource \"test_resource1\" \"attr\" has not been declared in the root module.",
+				"Did you mean the managed resource list.test_resource1? If so, please use the fully qualified name of the resource, e.g. resource.list.test_resource1",
+			},
+		},
+		{
+			// We are referencing a managed resource
+			// of type list using the resource.<block>.<name> syntax. This should be allowed.
+			name: "reference managed resource of type list using resource.<block>.<name>",
+			mainConfig: `
+				terraform {	
+					required_providers {
+						test = {
+							source = "hashicorp/test"
+							version = "1.0.0"
+						}
+					}
+				}
+
+				resource "list" "test_resource" {
+					provider = test
+					attr = "bar"
+				}
+
+				resource "list" "normal_resource" {
+					provider = test
+					attr = resource.list.test_resource.attr
+				}
+				`,
+			queryConfig: `
+				list "test_resource" "test" {
+					provider = test
+
+					config {
+						filter = {
+							attr = resource.list.test_resource.attr
+						}
+					}
+				}
+				`,
+		},
+		{
+			// Test referencing a non-existent list resource
+			name: "reference non-existent list resource",
+			mainConfig: `
+				terraform {	
+					required_providers {
+						test = {
+							source = "hashicorp/test"
+							version = "1.0.0"
+						}
+					}
+				}
+				`,
+			queryConfig: `
+				list "test_resource" "test" {
+					provider = test
+
+					config {
+						filter = {
+							attr = list.non_existent.attr
+						}
+					}
+				}
+				`,
+			diagCount: 1,
+			expectedErrMsg: []string{
+				"A list resource \"non_existent\" \"attr\" has not been declared in the root module.",
+			},
+		},
+		{
+			// Test referencing a list resource with invalid attribute
+			name: "reference list resource with invalid attribute",
+			mainConfig: `
+				terraform {	
+					required_providers {
+						test = {
+							source = "hashicorp/test"
+							version = "1.0.0"
+						}
+					}
+				}
+				`,
+			queryConfig: `
+				list "test_resource" "test" {
+					provider = test
+
+					config {
+						filter = {
+							attr = "valid"
+						}
+					}
+				}
+
+				list "test_resource" "another" {
+					provider = test
+
+					config {
+						filter = {
+							attr = list.test_resource.test.data[0].state.invalid_attr
+						}
+					}
+				}
+				`,
+			diagCount: 1,
+			expectedErrMsg: []string{
+				"Unsupported attribute: This object has no argument, nested block, or exported attribute named \"invalid_attr\".",
+			},
+		},
+		{
+			name: "circular reference between list resources",
+			mainConfig: `
+				terraform {	
+					required_providers {
+						test = {
+							source = "hashicorp/test"
+							version = "1.0.0"
+						}
+					}
+				}
+				`,
+			queryConfig: `
+				list "test_resource" "test1" {
+					provider = test
+
+					config {
+						filter = {
+							attr = list.test_resource.test2.data[0].state.id
+						}
+					}
+				}
+
+				list "test_resource" "test2" {
+					provider = test
+
+					config {
+						filter = {
+							attr = list.test_resource.test1.data[0].state.id
+						}
+					}
+				}
+				`,
+			diagCount: 1,
+			expectedErrMsg: []string{
+				"Cycle: list.test_resource",
+			},
+		},
+		{
+			// Test complex expression with list reference
+			name: "complex expression with list reference",
+			mainConfig: `
+				terraform {	
+					required_providers {
+						test = {
+							source = "hashicorp/test"
+							version = "1.0.0"
+						}
+					}
+				}
+				`,
+			queryConfig: `
+				variable "test_var" {
+					type = string
+					default = "default"
+				}
+
+				list "test_resource" "test1" {
+					provider = test
+
+					config {
+						filter = {
+							attr = var.test_var
+						}
+					}
+				}
+
+				list "test_resource" "test2" {
+					provider = test
+
+					config {
+						filter = {
+							attr = length(list.test_resource.test1.data) > 0 ? list.test_resource.test1.data[0].state.instance_type : var.test_var
+						}
+					}
+				}
+				`,
+		},
+		{
+			// Test list reference with index but without data field
+			name: "list reference with index but without data field",
+			mainConfig: `
+				terraform {	
+					required_providers {
+						test = {
+							source = "hashicorp/test"
+							version = "1.0.0"
+						}
+					}
+				}
+				`,
+			queryConfig: `
+				list "test_resource" "test1" {
+					for_each = toset(["foo", "bar"])
+					provider = test
+
+					config {
+						filter = {
+							attr = each.value
+						}
+					}
+				}
+
+				list "test_resource" "test2" {
+					provider = test
+					for_each = list.test_resource.test1
+
+					config {
+						filter = {
+							attr = each.value.data[0].instance_type
+						}
+					}
+				}
+				`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configFiles := map[string]string{"main.tf": tc.mainConfig}
+			if tc.queryConfig != "" {
+				configFiles["main.tfquery.hcl"] = tc.queryConfig
+			}
+			maps.Copy(configFiles, tc.extraConfig)
+
+			m := testModuleInline(t, configFiles, configs.MatchQueryFiles())
+
+			providerAddr := addrs.NewDefaultProvider("test")
+			provider := testProvider("test")
+			provider.GetProviderSchemaResponse = getListProviderSchemaResp()
+			var requestConfigs = make(map[string]cty.Value)
+			provider.ListResourceFn = func(request providers.ListResourceRequest) providers.ListResourceResponse {
+				requestConfigs[request.TypeName] = request.Config
+
+				return providers.ListResourceResponse{
+					Result: cty.ObjectVal(map[string]cty.Value{
+						"data":   cty.TupleVal([]cty.Value{}),
+						"config": request.Config,
+					}),
+				}
+			}
+
+			ctx, diags := NewContext(&ContextOpts{
+				Providers: map[addrs.Provider]providers.Factory{
+					providerAddr: testProviderFuncFixed(provider),
+				},
+			})
+			tfdiags.AssertNoDiagnostics(t, diags)
+
+			// Many of the MockProvider methods check for this, so we'll set it to be
+			// true externally.
+			provider.ConfigureProviderCalled = true
+
+			diags = ctx.Validate(m, &ValidateOpts{
+				Query: true,
+			})
+			if len(diags) != tc.diagCount {
+				t.Fatalf("expected %d diagnostics, got %d \n -diags: %s", tc.diagCount, len(diags), diags)
+			}
+
+			if tc.diagCount > 0 {
+				for _, err := range tc.expectedErrMsg {
+					if !strings.Contains(diags.Err().Error(), err) {
+						t.Fatalf("expected error message %q, but got %q", err, diags.Err().Error())
+					}
+				}
+			}
+
+		})
+	}
+}
+
+// Action Validation is largely exercised in context_plan_actions_test.go
+func TestContext2Validate_action(t *testing.T) {
+	tests := map[string]struct {
+		config               string
+		wantErr              string
+		expectValidateCalled bool
+	}{
+		"valid config": {
+			`
+				terraform {
+					required_providers {
+						test = {
+							source = "hashicorp/test"
+							version = "1.0.0"
+						}
+					}
+				}
+				action "test_register" "foo" {
+				  config {
+				      host = "cmdb.snot"
+				  }
+				}
+				resource "test_instance" "foo" {
+				  lifecycle {
+				    action_trigger {
+				      events = [after_create]
+				      actions = [action.test_register.foo]
+				    }
+				  }
+				}
+				`,
+			"",
+			true,
+		},
+		"validly null config": { // this doesn't seem likely, but let's make sure nothing panics.
+			`
+		terraform {
+			required_providers {
+				test = {
+					source = "hashicorp/test"
+					version = "1.0.0"
+				}
+			}
+		}
+		action "test_other" "foo" {
+		}
+		resource "test_instance" "foo" {
+		  lifecycle {
+		    action_trigger {
+		      events = [after_create]
+		      actions = [action.test_other.foo]
+		    }
+		  }
+		}
+		`,
+			"",
+			true,
+		},
+		"missing required config": {
+			`
+		terraform {
+			required_providers {
+				test = {
+					source = "hashicorp/test"
+					version = "1.0.0"
+				}
+			}
+		}
+		action "test_register" "foo" {
+			config {}
+		}
+		resource "test_instance" "foo" {
+			lifecycle {
+			action_trigger {
+				events = [after_create]
+				actions = [action.test_register.foo]
+			}
+			}
+		}
+				`,
+			"Missing required argument: The argument \"host\" is required, but no definition was found.",
+			false,
+		},
+		"invalid required config (provider validation)": {
+			`
+		terraform {
+			required_providers {
+				test = {
+					source = "hashicorp/test"
+					version = "1.0.0"
+				}
+			}
+		}
+		action "test_register" "foo" {
+		    config {
+				host = "invalid"
+			}
+		}
+		resource "test_instance" "foo" {
+		  lifecycle {
+		    action_trigger {
+		      events = [after_create]
+		      actions = [action.test_register.foo]
+		    }
+		  }
+		}
+		`,
+			"Invalid value for required argument \"host\" because I said so",
+			true,
+		},
+		"invalid nil config": {
+			`
+terraform {
+	required_providers {
+		test = {
+			source = "hashicorp/test"
+			version = "1.0.0"
+		}
+	}
+}
+action "test_register" "foo" {
+}
+resource "test_instance" "foo" {
+  lifecycle {
+    action_trigger {
+      events = [after_create]
+      actions = [action.test_register.foo]
+    }
+  }
+}
+`,
+			"Missing required argument: The argument \"host\" is required, but was not set.",
+			false,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			m := testModuleInline(t, map[string]string{"main.tf": test.config})
+
+			p := testProvider("test")
+			p.GetProviderSchemaResponse = getProviderSchemaResponseFromProviderSchema(&providerSchema{
+				ResourceTypes: map[string]*configschema.Block{
+					"test_instance": {
+						Attributes: map[string]*configschema.Attribute{
+							"foo": {Type: cty.String, Optional: true},
+							"num": {Type: cty.String, Optional: true},
+						},
+					},
+				},
+				Actions: map[string]*providers.ActionSchema{
+					"test_register": {
+						ConfigSchema: &configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"host":   {Type: cty.String, Required: true},
+								"output": {Type: cty.String, Computed: true, Optional: true},
+							},
+						},
+					},
+					"test_other": {
+						ConfigSchema: &configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"host": {Type: cty.String, Optional: true},
+							},
+						},
+					},
+				},
+			})
+			p.ValidateActionConfigFn = func(r providers.ValidateActionConfigRequest) (resp providers.ValidateActionConfigResponse) {
+				if r.Config.GetAttr("host") == cty.StringVal("invalid") {
+					resp.Diagnostics = resp.Diagnostics.Append(errors.New("Invalid value for required argument \"host\" because I said so"))
+				}
+				return
+			}
+
+			ctx := testContext2(t, &ContextOpts{
+				Providers: map[addrs.Provider]providers.Factory{
+					addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+				},
+			})
+
+			diags := ctx.Validate(m, nil)
+			if test.wantErr != "" {
+				if !diags.HasErrors() {
+					t.Errorf("unexpected success\nwant errors: %s", test.wantErr)
+				} else if got, want := diags.Err().Error(), test.wantErr; got != want {
+					t.Errorf("wrong error\ngot:  %s\nwant: %s", got, want)
+				}
+			} else {
+				if diags.HasErrors() {
+					t.Errorf("unexpected error\ngot: %s", diags.Err().Error())
+				}
+			}
+			if p.ValidateActionConfigCalled != test.expectValidateCalled {
+				if test.expectValidateCalled {
+					t.Fatal("provider Validate RPC was expected, but not called")
+				} else {
+					t.Fatal("unexpected Validate RCP call")
+				}
+			}
+		})
+	}
+}
+
+func TestContext2Validate_noListValidated(t *testing.T) {
+	tests := map[string]struct {
+		name        string
+		mainConfig  string
+		queryConfig string
+		query       bool
+	}{
+		"query files not validated in default validate mode": {
+			mainConfig: `
+			terraform {	
+				required_providers {
+					test = {
+						source = "hashicorp/test"
+						version = "1.0.0"
+					}
+				}
+			}
+			`,
+			queryConfig: `
+			list "test_resource" "test" {
+				provider = test
+
+				config {
+					filter = {
+						attr = list.non_existent.attr
+					}
+				}
+			}
+			
+			locals {
+				test = list.non_existent.attr
+			}
+			`,
+			query: false,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			configFiles := map[string]string{"main.tf": tc.mainConfig}
+			if tc.queryConfig != "" {
+				configFiles["main.tfquery.hcl"] = tc.queryConfig
+			}
+
+			opts := []configs.Option{}
+			if tc.query {
+				opts = append(opts, configs.MatchQueryFiles())
+			}
+
+			m := testModuleInline(t, configFiles, opts...)
+
+			p := testProvider("test")
+			p.GetProviderSchemaResponse = getListProviderSchemaResp()
+
+			ctx := testContext2(t, &ContextOpts{
+				Providers: map[addrs.Provider]providers.Factory{
+					addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+				},
+			})
+
+			diags := ctx.Validate(m, &ValidateOpts{
+				Query: tc.query,
+			})
+			tfdiags.AssertNoDiagnostics(t, diags)
+		})
+	}
 }

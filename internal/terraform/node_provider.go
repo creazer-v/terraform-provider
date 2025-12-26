@@ -69,7 +69,7 @@ func (n *NodeApplyableProvider) ValidateProvider(ctx EvalContext, provider provi
 		return diags
 	}
 
-	configSchema := schemaResp.Provider.Block
+	configSchema := schemaResp.Provider.Body
 	if configSchema == nil {
 		// Should never happen in real code, but often comes up in tests where
 		// mock schemas are being used that tend to be incomplete.
@@ -111,8 +111,16 @@ func (n *NodeApplyableProvider) ConfigureProvider(ctx EvalContext, provider prov
 		return diags
 	}
 
-	configSchema := resp.Provider.Block
-	configVal, configBody, evalDiags := ctx.EvaluateBlock(configBody, configSchema, nil, EvalDataForNoInstanceKey)
+	// BuiltinEvalContext contains a workaround for providers to allow
+	// inconsistent filesystem function results, which can be accepted due to
+	// the ephemeral nature of a provider configuration.
+	eval := ctx.EvaluateBlock
+	if ctx, ok := ctx.(*BuiltinEvalContext); ok {
+		eval = ctx.EvaluateBlockForProvider
+	}
+
+	configSchema := resp.Provider.Body
+	configVal, configBody, evalDiags := eval(configBody, configSchema, nil, EvalDataForNoInstanceKey)
 	diags = diags.Append(evalDiags)
 	if evalDiags.HasErrors() {
 		if config == nil {

@@ -5,8 +5,9 @@ package configs
 
 import (
 	"fmt"
+	"maps"
 	"path"
-	"sort"
+	"slices"
 	"strings"
 
 	version "github.com/hashicorp/go-version"
@@ -40,6 +41,11 @@ func BuildConfig(root *Module, walker ModuleWalker, loader MockDataLoader) (*Con
 		// the known types for validation.
 		providers := cfg.resolveProviderTypes()
 		cfg.resolveProviderTypesForTests(providers)
+
+		if cfg.Module.StateStore != nil {
+			stateProviderDiags := cfg.resolveStateStoreProviderType()
+			diags = append(diags, stateProviderDiags...)
+		}
 	}
 
 	diags = append(diags, validateProviderConfigs(nil, cfg, nil)...)
@@ -150,17 +156,10 @@ func buildChildModules(parent *Config, walker ModuleWalker) (map[string]*Config,
 
 	// We'll sort the calls by their local names so that they'll appear in a
 	// predictable order in any logging that's produced during the walk.
-	callNames := make([]string, 0, len(calls))
-	for k := range calls {
-		callNames = append(callNames, k)
-	}
-	sort.Strings(callNames)
-
-	for _, callName := range callNames {
+	for _, callName := range slices.Sorted(maps.Keys(calls)) {
 		call := calls[callName]
-		path := make([]string, len(parent.Path)+1)
-		copy(path, parent.Path)
-		path[len(path)-1] = call.Name
+		path := slices.Clone(parent.Path)
+		path = append(path, call.Name)
 
 		req := ModuleRequest{
 			Name:              call.Name,
@@ -215,8 +214,17 @@ func loadModule(root *Config, req *ModuleRequest, walker ModuleWalker) (*Config,
 		diags = diags.Append(&hcl.Diagnostic{
 			Severity: hcl.DiagWarning,
 			Summary:  "Backend configuration ignored",
-			Detail:   "Any selected backend applies to the entire configuration, so Terraform expects provider configurations only in the root module.\n\nThis is a warning rather than an error because it's sometimes convenient to temporarily call a root module as a child module for testing purposes, but this backend configuration block will have no effect.",
+			Detail:   "Any selected backend applies to the entire configuration, so Terraform expects backend configurations only in the root module.\n\nThis is a warning rather than an error because it's sometimes convenient to temporarily call a root module as a child module for testing purposes, but this backend configuration block will have no effect.",
 			Subject:  mod.Backend.DeclRange.Ptr(),
+		})
+	}
+
+	if mod.CloudConfig != nil {
+		diags = diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagWarning,
+			Summary:  "Cloud configuration ignored",
+			Detail:   "A cloud configuration block applies to the entire configuration, so Terraform expects 'cloud' blocks to only be in the root module.\n\nThis is a warning rather than an error because it's sometimes convenient to temporarily call a root module as a child module for testing purposes, but this cloud configuration block will have no effect.",
+			Subject:  mod.CloudConfig.DeclRange.Ptr(),
 		})
 	}
 
@@ -226,6 +234,16 @@ func loadModule(root *Config, req *ModuleRequest, walker ModuleWalker) (*Config,
 			Summary:  "Invalid import configuration",
 			Detail:   fmt.Sprintf("An import block was detected in %q. Import blocks are only allowed in the root module.", cfg.Path),
 			Subject:  mod.Import[0].DeclRange.Ptr(),
+		})
+	}
+
+	if len(mod.ListResources) > 0 {
+		first := slices.Collect(maps.Values(mod.ListResources))[0]
+		diags = diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid list configuration",
+			Detail:   fmt.Sprintf("A list block was detected in %q. List blocks are only allowed in the root module.", cfg.Path),
+			Subject:  first.DeclRange.Ptr(),
 		})
 	}
 

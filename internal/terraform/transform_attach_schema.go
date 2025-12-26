@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
 	"github.com/hashicorp/terraform/internal/dag"
+	"github.com/hashicorp/terraform/internal/providers"
 )
 
 // GraphNodeAttachResourceSchema is an interface implemented by node types
@@ -18,7 +19,7 @@ type GraphNodeAttachResourceSchema interface {
 	GraphNodeConfigResource
 	GraphNodeProviderConsumer
 
-	AttachResourceSchema(schema *configschema.Block, version uint64)
+	AttachResourceSchema(schema *providers.Schema)
 }
 
 // GraphNodeAttachProviderConfigSchema is an interface implemented by node types
@@ -39,6 +40,15 @@ type GraphNodeAttachProvisionerSchema interface {
 	// for each provisioner in turn. The implementer should save these for
 	// later use in evaluating provisioner configuration blocks.
 	AttachProvisionerSchema(name string, schema *configschema.Block)
+}
+
+// GraphNodeAttachActionSchema is an interface implemented by node types
+// that need a resource schema attached.
+type GraphNodeAttachActionSchema interface {
+	GraphNodeConfigAction
+	GraphNodeProviderConsumer
+
+	AttachActionSchema(schema *providers.ActionSchema)
 }
 
 // AttachSchemaTransformer finds nodes that implement
@@ -65,16 +75,16 @@ func (t *AttachSchemaTransformer) Transform(g *Graph) error {
 			typeName := addr.Resource.Type
 			providerFqn := tv.Provider()
 
-			schema, version, err := t.Plugins.ResourceTypeSchema(providerFqn, mode, typeName)
+			schema, err := t.Plugins.ResourceTypeSchema(providerFqn, mode, typeName)
 			if err != nil {
 				return fmt.Errorf("failed to read schema for %s in %s: %s", addr, providerFqn, err)
 			}
-			if schema == nil {
+			if schema.Body == nil {
 				log.Printf("[ERROR] AttachSchemaTransformer: No resource schema available for %s", addr)
 				continue
 			}
 			log.Printf("[TRACE] AttachSchemaTransformer: attaching resource schema to %s", dag.VertexName(v))
-			tv.AttachResourceSchema(schema, version)
+			tv.AttachResourceSchema(&schema)
 		}
 
 		if tv, ok := v.(GraphNodeAttachProviderConfigSchema); ok {
@@ -105,6 +115,21 @@ func (t *AttachSchemaTransformer) Transform(g *Graph) error {
 				log.Printf("[TRACE] AttachSchemaTransformer: attaching provisioner %q config schema to %s", name, dag.VertexName(v))
 				tv.AttachProvisionerSchema(name, schema)
 			}
+		}
+
+		if tv, ok := v.(GraphNodeAttachActionSchema); ok {
+			addr := tv.ActionAddr()
+			providerFqn := tv.Provider()
+			schema, err := t.Plugins.ActionTypeSchema(providerFqn, addr.Action.Type)
+			if err != nil {
+				return fmt.Errorf("failed to read schema for %s in %s: %s", addr, providerFqn, err)
+			}
+			if schema.ConfigSchema == nil {
+				log.Printf("[ERROR] AttachSchemaTransformer: No action schema available for %s", addr)
+				continue
+			}
+			log.Printf("[TRACE] AttachSchemaTransformer: attaching action schema to %s", dag.VertexName(v))
+			tv.AttachActionSchema(schema)
 		}
 	}
 

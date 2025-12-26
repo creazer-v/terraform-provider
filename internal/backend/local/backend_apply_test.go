@@ -189,7 +189,7 @@ func TestLocal_applyError(t *testing.T) {
 	schema := providers.ProviderSchema{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"ami": {Type: cty.String, Optional: true},
 						"id":  {Type: cty.String, Computed: true},
@@ -347,7 +347,7 @@ type backendWithFailingState struct {
 	Local
 }
 
-func (b *backendWithFailingState) StateMgr(name string) (statemgr.Full, error) {
+func (b *backendWithFailingState) StateMgr(name string) (statemgr.Full, tfdiags.Diagnostics) {
 	return &failingState{
 		statemgr.NewFilesystem("failing-state.tfstate"),
 	}, nil
@@ -391,7 +391,7 @@ func applyFixtureSchema() providers.ProviderSchema {
 	return providers.ProviderSchema{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"ami": {Type: cty.String, Optional: true},
 						"id":  {Type: cty.String, Computed: true},

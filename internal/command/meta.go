@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -71,11 +72,18 @@ type Meta struct {
 	// do some default behavior instead if so, rather than panicking.
 	Streams *terminal.Streams
 
-	View *views.View
+	// View is the newer abstraction used for output from Terraform operations.
+	// View allows output to be rendered differently, depending on CLI settings.
+	// Currently the only non-default option is machine-readable output using  the`-json` flag.
+	// We are slowly migrating Terraform operations away from using `cli.Ui` and towards
+	// using `views.View`, and so far only the commands with machine-readable output features are
+	// migrated.
+	// For more information see: https://github.com/hashicorp/terraform/issues/37439
+	View *views.View // View for output
 
 	Color            bool     // True if output should be colored
 	GlobalPluginDirs []string // Additional paths to search for plugins
-	Ui               cli.Ui   // Ui for output
+	Ui               cli.Ui   // Ui for output. See View above.
 
 	// Services provides access to remote endpoint information for
 	// "terraform-native' services running at a specific user-facing hostname.
@@ -200,8 +208,12 @@ type Meta struct {
 	// It is initialized on first use.
 	configLoader *configload.Loader
 
-	// backendState is the currently active backend state
-	backendState *workdir.BackendState
+	// backendConfigState is the currently active backend state.
+	// This is used when creating plan files.
+	backendConfigState *workdir.BackendConfigState
+	// stateStoreConfigState is the currently active state_store state.
+	// This is used when creating plan files.
+	stateStoreConfigState *workdir.StateStoreConfigState
 
 	// Variables for the context (private)
 	variableArgs arguments.FlagNameValueSlice
@@ -264,6 +276,9 @@ type Meta struct {
 	// Used with commands which write state to allow users to write remote
 	// state even if the remote and local Terraform versions don't match.
 	ignoreRemoteVersion bool
+
+	// set to true if query files should be parsed
+	includeQueryFiles bool
 }
 
 type testingOverrides struct {
@@ -293,9 +308,7 @@ func (m *Meta) StateOutPath() string {
 // Colorize returns the colorization structure for a command.
 func (m *Meta) Colorize() *colorstring.Colorize {
 	colors := make(map[string]string)
-	for k, v := range colorstring.DefaultColors {
-		colors[k] = v
-	}
+	maps.Copy(colors, colorstring.DefaultColors)
 	colors["purple"] = "38;5;57"
 
 	return &colorstring.Colorize{
@@ -537,7 +550,7 @@ func (m *Meta) contextOpts() (*terraform.ContextOpts, error) {
 		opts.Provisioners = m.testingOverrides.Provisioners
 	} else {
 		var providerFactories map[addrs.Provider]providers.Factory
-		providerFactories, err = m.providerFactories()
+		providerFactories, err = m.ProviderFactories()
 		opts.Providers = providerFactories
 		opts.Provisioners = m.provisionerFactories()
 	}

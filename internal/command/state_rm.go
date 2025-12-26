@@ -16,7 +16,8 @@ import (
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
 
-// StateRmCommand is a Command implementation that shows a single resource.
+// StateRmCommand is a Command implementation that removes
+// a single resource from the state.
 type StateRmCommand struct {
 	StateMeta
 }
@@ -47,7 +48,8 @@ func (c *StateRmCommand) Run(args []string) int {
 	}
 
 	// Get the state
-	stateMgr, err := c.State()
+	view := arguments.ViewHuman
+	stateMgr, err := c.State(view)
 	if err != nil {
 		c.Ui.Error(fmt.Sprintf(errStateLoadingState, err))
 		return 1
@@ -114,7 +116,8 @@ func (c *StateRmCommand) Run(args []string) int {
 		return 0 // This is as far as we go in dry-run mode
 	}
 
-	b, backendDiags := c.Backend(nil)
+	// Load the backend
+	b, backendDiags := c.backend(".", view)
 	diags = diags.Append(backendDiags)
 	if backendDiags.HasErrors() {
 		c.showDiagnostics(diags)
@@ -189,6 +192,9 @@ Options:
 
   -state=PATH             Path to the state file to update. Defaults to the
                           current workspace state.
+                          Legacy option for the local backend only. See
+                          the local backend's documentation for more
+                          information.
 
   -ignore-remote-version  Continue even if remote and local Terraform versions
                           are incompatible. This may result in an unusable

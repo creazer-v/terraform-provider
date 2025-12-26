@@ -8,6 +8,7 @@ import (
 	"log"
 
 	svchost "github.com/hashicorp/terraform-svchost"
+
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/backend"
 	"github.com/hashicorp/terraform/internal/command/clistate"
@@ -72,13 +73,19 @@ type Operation struct {
 
 	// PlanId is an opaque value that backends can use to execute a specific
 	// plan for an apply operation.
-	//
+	PlanId      string
+	PlanRefresh bool   // PlanRefresh will do a refresh before a plan
+	PlanOutPath string // PlanOutPath is the path to save the plan
+
 	// PlanOutBackend is the backend to store with the plan. This is the
 	// backend that will be used when applying the plan.
-	PlanId         string
-	PlanRefresh    bool   // PlanRefresh will do a refresh before a plan
-	PlanOutPath    string // PlanOutPath is the path to save the plan
+	// Only one of PlanOutBackend or PlanOutStateStore may be set.
 	PlanOutBackend *plans.Backend
+
+	// PlanOutStateStore is the state_store to store with the plan. This is the
+	// state store that will be used when applying the plan.
+	// Only one of PlanOutBackend or PlanOutStateStore may be set
+	PlanOutStateStore *plans.StateStore
 
 	// ConfigDir is the path to the directory containing the configuration's
 	// root module.
@@ -111,6 +118,7 @@ type Operation struct {
 	PlanMode             plans.Mode
 	AutoApprove          bool
 	Targets              []addrs.Targetable
+	ActionTargets        []addrs.Targetable
 	ForceReplace         []addrs.AbsResourceInstance
 	Variables            map[string]UnparsedVariableValue
 	StatePersistInterval int
@@ -154,6 +162,9 @@ type Operation struct {
 	// for unmatched import targets and where any generated config should be
 	// written to.
 	GenerateConfigOut string
+
+	// Query is true if the operation should be a query operation
+	Query bool
 }
 
 // HasConfig returns true if and only if the operation has a ConfigDir value
@@ -177,8 +188,8 @@ func (o *Operation) Config() (*configs.Config, tfdiags.Diagnostics) {
 // operation.
 //
 // If the given diagnostics contains errors then the operation's result
-// will be set to backend.OperationFailure. It will be set to
-// backend.OperationSuccess otherwise. It will then use o.View.Diagnostics
+// will be set to backendrun.OperationFailure. It will be set to
+// backendrun.OperationSuccess otherwise. It will then use o.View.Diagnostics
 // to show the given diagnostics before returning.
 //
 // Callers should feel free to do each of these operations separately in

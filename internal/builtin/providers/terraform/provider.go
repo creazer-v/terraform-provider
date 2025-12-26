@@ -7,14 +7,16 @@ import (
 	"fmt"
 	"log"
 
+	tfaddr "github.com/hashicorp/terraform-registry-address"
 	"github.com/zclconf/go-cty/cty"
 
-	tfaddr "github.com/hashicorp/terraform-registry-address"
 	"github.com/hashicorp/terraform/internal/providers"
 )
 
 // Provider is an implementation of providers.Interface
 type Provider struct{}
+
+var _ providers.Interface = &Provider{}
 
 // NewProvider returns a new terraform provider
 func NewProvider() providers.Interface {
@@ -35,6 +37,7 @@ func (p *Provider) GetProviderSchema() providers.GetProviderSchemaResponse {
 			"terraform_data": dataStoreResourceSchema(),
 		},
 		EphemeralResourceTypes: map[string]providers.Schema{},
+		ListResourceTypes:      map[string]providers.Schema{},
 		Functions: map[string]providers.FunctionDecl{
 			"encode_tfvars": {
 				Summary:     "Produce a string representation of an object using the same syntax as for `.tfvars` files",
@@ -72,9 +75,19 @@ func (p *Provider) GetProviderSchema() providers.GetProviderSchemaResponse {
 				ReturnType: cty.String,
 			},
 		},
+		StateStores: map[string]providers.Schema{},
+		Actions:     map[string]providers.ActionSchema{},
 	}
 	providers.SchemaCache.Set(tfaddr.NewProvider(tfaddr.BuiltInProviderHost, tfaddr.BuiltInProviderNamespace, "terraform"), resp)
 	return resp
+}
+
+func (p *Provider) GetResourceIdentitySchemas() providers.GetResourceIdentitySchemasResponse {
+	return providers.GetResourceIdentitySchemasResponse{
+		IdentityTypes: map[string]providers.IdentitySchema{
+			"terraform_data": dataStoreResourceIdentitySchema(),
+		},
+	}
 }
 
 // ValidateProviderConfig is used to validate the configuration values.
@@ -95,7 +108,7 @@ func (p *Provider) ValidateDataResourceConfig(req providers.ValidateDataResource
 
 	// This should not happen
 	if req.TypeName != "terraform_remote_state" {
-		res.Diagnostics.Append(fmt.Errorf("Error: unsupported data source %s", req.TypeName))
+		res.Diagnostics = res.Diagnostics.Append(fmt.Errorf("Error: unsupported data source %s", req.TypeName))
 		return res
 	}
 
@@ -103,6 +116,12 @@ func (p *Provider) ValidateDataResourceConfig(req providers.ValidateDataResource
 	res.Diagnostics = diags
 
 	return res
+}
+
+func (p *Provider) ValidateListResourceConfig(req providers.ValidateListResourceConfigRequest) providers.ValidateListResourceConfigResponse {
+	var resp providers.ValidateListResourceConfigResponse
+	resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("unsupported list resource type %q", req.TypeName))
+	return resp
 }
 
 // Configure configures and initializes the provider.
@@ -120,7 +139,7 @@ func (p *Provider) ReadDataSource(req providers.ReadDataSourceRequest) providers
 
 	// This should not happen
 	if req.TypeName != "terraform_remote_state" {
-		res.Diagnostics.Append(fmt.Errorf("Error: unsupported data source %s", req.TypeName))
+		res.Diagnostics = res.Diagnostics.Append(fmt.Errorf("Error: unsupported data source %s", req.TypeName))
 		return res
 	}
 
@@ -130,6 +149,10 @@ func (p *Provider) ReadDataSource(req providers.ReadDataSourceRequest) providers
 	res.Diagnostics = diags
 
 	return res
+}
+
+func (p *Provider) GenerateResourceConfig(providers.GenerateResourceConfigRequest) providers.GenerateResourceConfigResponse {
+	panic("not implemented")
 }
 
 // Stop is called when the provider should halt any in-flight actions.
@@ -148,6 +171,10 @@ func (p *Provider) Stop() error {
 // result is used for any further processing.
 func (p *Provider) UpgradeResourceState(req providers.UpgradeResourceStateRequest) providers.UpgradeResourceStateResponse {
 	return upgradeDataStoreResourceState(req)
+}
+
+func (p *Provider) UpgradeResourceIdentity(req providers.UpgradeResourceIdentityRequest) providers.UpgradeResourceIdentityResponse {
+	return upgradeDataStoreResourceIdentity(req)
 }
 
 // ReadResource refreshes a resource and returns its current state.
@@ -198,28 +225,28 @@ func (p *Provider) ValidateResourceConfig(req providers.ValidateResourceConfigRe
 
 func (p *Provider) ValidateEphemeralResourceConfig(req providers.ValidateEphemeralResourceConfigRequest) providers.ValidateEphemeralResourceConfigResponse {
 	var resp providers.ValidateEphemeralResourceConfigResponse
-	resp.Diagnostics.Append(fmt.Errorf("unsupported ephemeral resource type %q", req.TypeName))
+	resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("unsupported ephemeral resource type %q", req.TypeName))
 	return resp
 }
 
 // OpenEphemeralResource implements providers.Interface.
 func (p *Provider) OpenEphemeralResource(req providers.OpenEphemeralResourceRequest) providers.OpenEphemeralResourceResponse {
 	var resp providers.OpenEphemeralResourceResponse
-	resp.Diagnostics.Append(fmt.Errorf("unsupported ephemeral resource type %q", req.TypeName))
+	resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("unsupported ephemeral resource type %q", req.TypeName))
 	return resp
 }
 
 // RenewEphemeralResource implements providers.Interface.
 func (p *Provider) RenewEphemeralResource(req providers.RenewEphemeralResourceRequest) providers.RenewEphemeralResourceResponse {
 	var resp providers.RenewEphemeralResourceResponse
-	resp.Diagnostics.Append(fmt.Errorf("unsupported ephemeral resource type %q", req.TypeName))
+	resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("unsupported ephemeral resource type %q", req.TypeName))
 	return resp
 }
 
 // CloseEphemeralResource implements providers.Interface.
 func (p *Provider) CloseEphemeralResource(req providers.CloseEphemeralResourceRequest) providers.CloseEphemeralResourceResponse {
 	var resp providers.CloseEphemeralResourceResponse
-	resp.Diagnostics.Append(fmt.Errorf("unsupported ephemeral resource type %q", req.TypeName))
+	resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("unsupported ephemeral resource type %q", req.TypeName))
 	return resp
 }
 
@@ -250,6 +277,93 @@ func (p *Provider) CallFunction(req providers.CallFunctionRequest) providers.Cal
 	return providers.CallFunctionResponse{
 		Result: result,
 	}
+}
+
+func (p *Provider) ListResource(req providers.ListResourceRequest) providers.ListResourceResponse {
+	var resp providers.ListResourceResponse
+	resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("unsupported list resource type %q", req.TypeName))
+	return resp
+}
+
+func (p *Provider) ValidateStateStoreConfig(req providers.ValidateStateStoreConfigRequest) providers.ValidateStateStoreConfigResponse {
+	var resp providers.ValidateStateStoreConfigResponse
+	resp.Diagnostics.Append(fmt.Errorf("unsupported state store type %q", req.TypeName))
+	return resp
+}
+
+func (p *Provider) ConfigureStateStore(req providers.ConfigureStateStoreRequest) providers.ConfigureStateStoreResponse {
+	var resp providers.ConfigureStateStoreResponse
+	resp.Diagnostics.Append(fmt.Errorf("unsupported state store type %q", req.TypeName))
+	return resp
+}
+
+func (p *Provider) ReadStateBytes(req providers.ReadStateBytesRequest) providers.ReadStateBytesResponse {
+	var resp providers.ReadStateBytesResponse
+	resp.Diagnostics.Append(fmt.Errorf("unsupported state store type %q", req.TypeName))
+	return resp
+}
+
+func (p *Provider) WriteStateBytes(req providers.WriteStateBytesRequest) providers.WriteStateBytesResponse {
+	var resp providers.WriteStateBytesResponse
+	resp.Diagnostics.Append(fmt.Errorf("unsupported state store type %q", req.TypeName))
+	return resp
+}
+
+func (p *Provider) LockState(req providers.LockStateRequest) providers.LockStateResponse {
+	var resp providers.LockStateResponse
+	resp.Diagnostics.Append(fmt.Errorf("unsupported state store type %q", req.TypeName))
+	return resp
+}
+
+func (p *Provider) UnlockState(req providers.UnlockStateRequest) providers.UnlockStateResponse {
+	var resp providers.UnlockStateResponse
+	resp.Diagnostics.Append(fmt.Errorf("unsupported state store type %q", req.TypeName))
+	return resp
+}
+
+func (p *Provider) GetStates(req providers.GetStatesRequest) providers.GetStatesResponse {
+	var resp providers.GetStatesResponse
+	resp.Diagnostics.Append(fmt.Errorf("unsupported state store type %q", req.TypeName))
+	return resp
+}
+
+func (p *Provider) DeleteState(req providers.DeleteStateRequest) providers.DeleteStateResponse {
+	var resp providers.DeleteStateResponse
+	resp.Diagnostics.Append(fmt.Errorf("unsupported state store type %q", req.TypeName))
+	return resp
+}
+
+func (p *Provider) PlanAction(req providers.PlanActionRequest) providers.PlanActionResponse {
+	var resp providers.PlanActionResponse
+
+	switch req.ActionType {
+	default:
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("unsupported action %q", req.ActionType))
+	}
+
+	return resp
+}
+
+func (p *Provider) InvokeAction(req providers.InvokeActionRequest) providers.InvokeActionResponse {
+	var resp providers.InvokeActionResponse
+
+	switch req.ActionType {
+	default:
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("unsupported action %q", req.ActionType))
+	}
+
+	return resp
+}
+
+func (p *Provider) ValidateActionConfig(req providers.ValidateActionConfigRequest) providers.ValidateActionConfigResponse {
+	var resp providers.ValidateActionConfigResponse
+
+	switch req.TypeName {
+	default:
+		resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("unsupported action %q", req.TypeName))
+	}
+
+	return resp
 }
 
 // Close is a noop for this provider, since it's run in-process.

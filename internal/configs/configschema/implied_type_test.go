@@ -218,6 +218,69 @@ func TestBlockContainsSensitive(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBlockContainsWriteOnly(t *testing.T) {
+	tests := map[string]struct {
+		Schema *Block
+		Want   bool
+	}{
+		"object contains write only": {
+			&Block{
+				Attributes: map[string]*Attribute{
+					"wo": {WriteOnly: true},
+				},
+			},
+			true,
+		},
+		"no write only attrs": {
+			&Block{
+				Attributes: map[string]*Attribute{
+					"not_wo": {},
+				},
+			},
+			false,
+		},
+		"nested object contains write only": {
+			&Block{
+				Attributes: map[string]*Attribute{
+					"nested": {
+						NestedType: &Object{
+							Nesting: NestingSingle,
+							Attributes: map[string]*Attribute{
+								"wo": {WriteOnly: true},
+							},
+						},
+					},
+				},
+			},
+			true,
+		},
+		"nested obj, no write only attrs": {
+			&Block{
+				Attributes: map[string]*Attribute{
+					"nested": {
+						NestedType: &Object{
+							Nesting: NestingSingle,
+							Attributes: map[string]*Attribute{
+								"public": {},
+							},
+						},
+					},
+				},
+			},
+			false,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := test.Schema.ContainsWriteOnly()
+			if got != test.Want {
+				t.Errorf("wrong result\ngot:  %#v\nwant: %#v", got, test.Want)
+			}
+		})
+	}
 
 }
 
@@ -237,6 +300,25 @@ func TestObjectImpliedType(t *testing.T) {
 		"attributes": {
 			&Object{
 				Nesting: NestingSingle,
+				Attributes: map[string]*Attribute{
+					"optional":          {Type: cty.String, Optional: true},
+					"required":          {Type: cty.Number, Required: true},
+					"computed":          {Type: cty.List(cty.Bool), Computed: true},
+					"optional_computed": {Type: cty.Map(cty.Bool), Optional: true, Computed: true},
+				},
+			},
+			cty.Object(
+				map[string]cty.Type{
+					"optional":          cty.String,
+					"required":          cty.Number,
+					"computed":          cty.List(cty.Bool),
+					"optional_computed": cty.Map(cty.Bool),
+				},
+			),
+		},
+		"nesting-group-attributes": {
+			&Object{
+				Nesting: NestingGroup,
 				Attributes: map[string]*Attribute{
 					"optional":          {Type: cty.String, Optional: true},
 					"required":          {Type: cty.Number, Required: true},
@@ -456,6 +538,101 @@ func TestObjectContainsSensitive(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			got := test.Schema.ContainsSensitive()
+			if got != test.Want {
+				t.Errorf("wrong result\ngot:  %#v\nwant: %#v", got, test.Want)
+			}
+		})
+	}
+
+}
+
+func TestObjectContainsWriteOnly(t *testing.T) {
+	tests := map[string]struct {
+		Schema *Object
+		Want   bool
+	}{
+		"object contains write only": {
+			&Object{
+				Attributes: map[string]*Attribute{
+					"wo": {WriteOnly: true},
+				},
+			},
+			true,
+		},
+		"no write only attrs": {
+			&Object{
+				Attributes: map[string]*Attribute{
+					"not_wo": {},
+				},
+			},
+			false,
+		},
+		"nested object contains write only": {
+			&Object{
+				Attributes: map[string]*Attribute{
+					"nested": {
+						NestedType: &Object{
+							Nesting: NestingSingle,
+							Attributes: map[string]*Attribute{
+								"wo": {WriteOnly: true},
+							},
+						},
+					},
+				},
+			},
+			true,
+		},
+		"nested obj, no write only attrs": {
+			&Object{
+				Attributes: map[string]*Attribute{
+					"nested": {
+						NestedType: &Object{
+							Nesting: NestingSingle,
+							Attributes: map[string]*Attribute{
+								"public": {},
+							},
+						},
+					},
+				},
+			},
+			false,
+		},
+		"several nested objects, one contains write only": {
+			&Object{
+				Attributes: map[string]*Attribute{
+					"alpha": {
+						NestedType: &Object{
+							Nesting: NestingSingle,
+							Attributes: map[string]*Attribute{
+								"not_wo": {},
+							},
+						},
+					},
+					"beta": {
+						NestedType: &Object{
+							Nesting: NestingSingle,
+							Attributes: map[string]*Attribute{
+								"wo": {WriteOnly: true},
+							},
+						},
+					},
+					"gamma": {
+						NestedType: &Object{
+							Nesting: NestingSingle,
+							Attributes: map[string]*Attribute{
+								"not_wo": {},
+							},
+						},
+					},
+				},
+			},
+			true,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := test.Schema.ContainsWriteOnly()
 			if got != test.Want {
 				t.Errorf("wrong result\ngot:  %#v\nwant: %#v", got, test.Want)
 			}

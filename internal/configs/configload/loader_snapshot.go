@@ -6,9 +6,10 @@ package configload
 import (
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"time"
 
 	version "github.com/hashicorp/go-version"
@@ -23,7 +24,7 @@ import (
 // creates an in-memory snapshot of the configuration files used, which can
 // be later used to create a loader that may read only from this snapshot.
 func (l *Loader) LoadConfigWithSnapshot(rootDir string) (*configs.Config, *Snapshot, hcl.Diagnostics) {
-	rootMod, diags := l.parser.LoadConfigDir(rootDir)
+	rootMod, diags := l.parser.LoadConfigDir(rootDir, l.parserOpts...)
 	if rootMod == nil {
 		return nil, nil, diags
 	}
@@ -257,11 +258,7 @@ func (fs snapshotFS) Open(name string) (afero.File, error) {
 		modDir := filepath.Clean(candidate.Dir)
 		if modDir == directDir {
 			// We've matched the module directory itself
-			filenames := make([]string, 0, len(candidate.Files))
-			for n := range candidate.Files {
-				filenames = append(filenames, n)
-			}
-			sort.Strings(filenames)
+			filenames := slices.Sorted(maps.Keys(candidate.Files))
 			return &snapshotDir{
 				filenames: filenames,
 			}, nil

@@ -16,8 +16,8 @@ import (
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/backend/backendrun"
 	"github.com/hashicorp/terraform/internal/command/views"
-	viewsjson "github.com/hashicorp/terraform/internal/command/views/json"
 	"github.com/hashicorp/terraform/internal/configs"
+	"github.com/hashicorp/terraform/internal/lang/marks"
 	"github.com/hashicorp/terraform/internal/logging"
 	"github.com/hashicorp/terraform/internal/plans"
 	"github.com/hashicorp/terraform/internal/states"
@@ -146,13 +146,19 @@ func (b *Local) opApply(
 				desc = "Terraform will destroy all your managed infrastructure, as shown above.\n" +
 					"There is no undo. Only 'yes' will be accepted to confirm."
 			case plans.RefreshOnlyMode:
-				if op.Workspace != "default" {
-					query = "Would you like to update the Terraform state for \"" + op.Workspace + "\" to reflect these detected changes?"
+				if len(plan.ActionTargetAddrs) > 0 {
+					query = "Would you like to invoke the specified actions?"
+					desc = "Terraform will invoke the actions described above, and any changes will be written to the state without modifying real infrastructure\n" +
+						"There is no undo. Only 'yes' will be accepted to confirm."
 				} else {
-					query = "Would you like to update the Terraform state to reflect these detected changes?"
+					if op.Workspace != "default" {
+						query = "Would you like to update the Terraform state for \"" + op.Workspace + "\" to reflect these detected changes?"
+					} else {
+						query = "Would you like to update the Terraform state to reflect these detected changes?"
+					}
+					desc = "Terraform will write these changes to the state without modifying any real infrastructure.\n" +
+						"There is no undo. Only 'yes' will be accepted to confirm."
 				}
-				desc = "Terraform will write these changes to the state without modifying any real infrastructure.\n" +
-					"There is no undo. Only 'yes' will be accepted to confirm."
 			default:
 				if op.Workspace != "default" {
 					query = "Do you want to perform these actions in workspace \"" + op.Workspace + "\"?"
@@ -340,17 +346,58 @@ func (b *Local) opApply(
 						Subject:  rng,
 					})
 				} else {
+					markedPlannedVar := plannedVar
+					markedParsedVar := parsedVar.Value
+
+					if decl.Sensitive {
+						markedPlannedVar = markedPlannedVar.Mark(marks.Sensitive)
+						markedParsedVar = markedParsedVar.Mark(marks.Sensitive)
+					}
+
 					// The user can't override the planned variables, so we
-					// error when possible to avoid confusion. If the parsed
-					// variables comes from an auto-file however, it's not input
-					// directly by the user so we have to ignore it.
-					if parsedVar.Value.Equals(plannedVar).False() && parsedVar.SourceType != terraform.ValueFromAutoFile {
-						diags = diags.Append(&hcl.Diagnostic{
-							Severity: hcl.DiagError,
-							Summary:  "Can't change variable when applying a saved plan",
-							Detail:   fmt.Sprintf("The variable %s cannot be set using the -var and -var-file options when applying a saved plan file, because a saved plan includes the variable values that were set when it was created. The saved plan specifies %s as the value whereas during apply the value %s was %s. To declare an ephemeral variable which is not saved in the plan file, use ephemeral = true.", varName, viewsjson.CompactValueStr(parsedVar.Value), viewsjson.CompactValueStr(plannedVar), parsedVar.SourceType.DiagnosticLabel()),
-							Subject:  rng,
-						})
+					// error when possible to avoid confusion.
+					if parsedVar.Value.Equals(plannedVar).False() {
+						switch parsedVar.SourceType {
+						case terraform.ValueFromAutoFile:
+							// If the parsed variables comes from an auto-file,
+							// it's not input directly by the user so we have to ignore it.
+							continue
+						case terraform.ValueFromEnvVar:
+							diags = diags.Append(&hcl.Diagnostic{
+								Severity: hcl.DiagWarning,
+								Summary:  "Ignoring variable when applying a saved plan",
+								Detail: fmt.Sprintf("The variable %s cannot be overriden when applying a saved plan file, "+
+									"because a saved plan includes the variable values that were set when it was created. "+
+									"The saved plan specifies %s as the value whereas during apply the value %s was %s. "+
+									"To declare an ephemeral variable which is not saved in the plan file, use ephemeral = true.",
+									varName, tfdiags.CompactValueStr(markedPlannedVar), tfdiags.CompactValueStr(markedParsedVar),
+									parsedVar.SourceType.DiagnosticLabel()),
+								Subject: rng,
+							})
+						case terraform.ValueFromCLIArg, terraform.ValueFromNamedFile:
+							diags = diags.Append(&hcl.Diagnostic{
+								Severity: hcl.DiagError,
+								Summary:  "Can't change variable when applying a saved plan",
+								Detail: fmt.Sprintf("The variable %s cannot be set using the -var and -var-file options when "+
+									"applying a saved plan file, because a saved plan includes the variable values that were "+
+									"set when it was created. The saved plan specifies %s as the value whereas during apply "+
+									"the value %s was %s. To declare an ephemeral variable which is not saved in the plan "+
+									"file, use ephemeral = true.",
+									varName, tfdiags.CompactValueStr(markedPlannedVar), tfdiags.CompactValueStr(markedParsedVar),
+									parsedVar.SourceType.DiagnosticLabel()),
+								Subject: rng,
+							})
+						default:
+							// Other SourceTypes should never reach this point because
+							//  - ValueFromConfig - supplied plan already contains the original configuration
+							//  - ValueFromInput - we disable prompt when plan file is supplied
+							//  - ValueFromCaller - only used in tests
+							panic(fmt.Sprintf("Attempted to change variable %s when applying a saved plan. "+
+								"The saved plan specifies %s as the value whereas during apply the value %s was %s. "+
+								"This is a bug in Terraform, please report it.",
+								varName, tfdiags.CompactValueStr(markedPlannedVar), tfdiags.CompactValueStr(markedParsedVar),
+								parsedVar.SourceType.DiagnosticLabel()))
+						}
 					}
 				}
 			}

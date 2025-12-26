@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/zclconf/go-cty/cty"
 
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs"
@@ -21,11 +22,20 @@ import (
 type Run struct {
 	Config *configs.TestRun
 
+	// ModuleConfig is the config that this run block is executing against.
+	ModuleConfig *configs.Config
+
 	Verbose *Verbose
 
 	Name   string
 	Index  int
 	Status Status
+
+	// Outputs are set by the Terraform Test graph once this run block is
+	// executed. Callers should only access this if the Status field is set to
+	// Pass or Fail as both of these cases indicate the run block was executed
+	// successfully, and actually had values to write.
+	Outputs cty.Value
 
 	Diagnostics tfdiags.Diagnostics
 
@@ -42,8 +52,28 @@ type Run struct {
 	ExecutionMeta *RunExecutionMeta
 }
 
+func NewRun(config *configs.TestRun, moduleConfig *configs.Config, index int) *Run {
+	return &Run{
+		Config:       config,
+		ModuleConfig: moduleConfig,
+		Name:         config.Name,
+		Index:        index,
+	}
+}
+
 type RunExecutionMeta struct {
+	Start    time.Time
 	Duration time.Duration
+}
+
+// StartTimestamp returns the start time metadata as a timestamp formatted as YYYY-MM-DDTHH:MM:SSZ.
+// Times are converted to UTC, if they aren't already.
+// If the start time is unset an empty string is returned.
+func (m *RunExecutionMeta) StartTimestamp() string {
+	if m.Start.IsZero() {
+		return ""
+	}
+	return m.Start.UTC().Format(time.RFC3339)
 }
 
 // Verbose is a utility struct that holds all the information required for a run
@@ -63,72 +93,6 @@ func (run *Run) Addr() addrs.Run {
 	return addrs.Run{Name: run.Name}
 }
 
-func (run *Run) GetTargets() ([]addrs.Targetable, tfdiags.Diagnostics) {
-	var diagnostics tfdiags.Diagnostics
-	var targets []addrs.Targetable
-
-	for _, target := range run.Config.Options.Target {
-		addr, diags := addrs.ParseTarget(target)
-		diagnostics = diagnostics.Append(diags)
-		if addr != nil {
-			targets = append(targets, addr.Subject)
-		}
-	}
-
-	return targets, diagnostics
-}
-
-func (run *Run) GetReplaces() ([]addrs.AbsResourceInstance, tfdiags.Diagnostics) {
-	var diagnostics tfdiags.Diagnostics
-	var replaces []addrs.AbsResourceInstance
-
-	for _, replace := range run.Config.Options.Replace {
-		addr, diags := addrs.ParseAbsResourceInstance(replace)
-		diagnostics = diagnostics.Append(diags)
-		if diags.HasErrors() {
-			continue
-		}
-
-		if addr.Resource.Resource.Mode != addrs.ManagedResourceMode {
-			diagnostics = diagnostics.Append(&hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  "Can only target managed resources for forced replacements.",
-				Detail:   addr.String(),
-				Subject:  replace.SourceRange().Ptr(),
-			})
-			continue
-		}
-
-		replaces = append(replaces, addr)
-	}
-
-	return replaces, diagnostics
-}
-
-func (run *Run) GetReferences() ([]*addrs.Reference, tfdiags.Diagnostics) {
-	var diagnostics tfdiags.Diagnostics
-	var references []*addrs.Reference
-
-	for _, rule := range run.Config.CheckRules {
-		for _, variable := range rule.Condition.Variables() {
-			reference, diags := addrs.ParseRef(variable)
-			diagnostics = diagnostics.Append(diags)
-			if reference != nil {
-				references = append(references, reference)
-			}
-		}
-		for _, variable := range rule.ErrorMessage.Variables() {
-			reference, diags := addrs.ParseRef(variable)
-			diagnostics = diagnostics.Append(diags)
-			if reference != nil {
-				references = append(references, reference)
-			}
-		}
-	}
-
-	return references, diagnostics
-}
-
 // ExplainExpectedFailures is similar to ValidateExpectedFailures except it
 // looks for any diagnostics produced by custom conditions and are included in
 // the expected failures and adds an additional explanation that clarifies the
@@ -138,14 +102,14 @@ func (run *Run) GetReferences() ([]*addrs.Reference, tfdiags.Diagnostics) {
 // an expected failure during the planning stage will still result in the
 // overall test failing as the plan failed and we couldn't even execute the
 // apply stage.
-func (run *Run) ExplainExpectedFailures(originals tfdiags.Diagnostics) tfdiags.Diagnostics {
+func ExplainExpectedFailures(config *configs.TestRun, originals tfdiags.Diagnostics) tfdiags.Diagnostics {
 
 	// We're going to capture all the checkable objects that are referenced
 	// from the expected failures.
 	expectedFailures := addrs.MakeMap[addrs.Referenceable, bool]()
 	sourceRanges := addrs.MakeMap[addrs.Referenceable, tfdiags.SourceRange]()
 
-	for _, traversal := range run.Config.ExpectFailures {
+	for _, traversal := range config.ExpectFailures {
 		// Ignore the diagnostics returned from the reference parsing, these
 		// references will have been checked earlier in the process by the
 		// validate stage so we don't need to do that again here.
@@ -265,14 +229,14 @@ func (run *Run) ExplainExpectedFailures(originals tfdiags.Diagnostics) tfdiags.D
 // diagnostics were generated by custom conditions. Terraform adds the
 // addrs.CheckRule that generated each diagnostic to the diagnostic itself so we
 // can tell which diagnostics can be expected.
-func (run *Run) ValidateExpectedFailures(originals tfdiags.Diagnostics) tfdiags.Diagnostics {
+func ValidateExpectedFailures(config *configs.TestRun, originals tfdiags.Diagnostics) tfdiags.Diagnostics {
 
 	// We're going to capture all the checkable objects that are referenced
 	// from the expected failures.
 	expectedFailures := addrs.MakeMap[addrs.Referenceable, bool]()
 	sourceRanges := addrs.MakeMap[addrs.Referenceable, tfdiags.SourceRange]()
 
-	for _, traversal := range run.Config.ExpectFailures {
+	for _, traversal := range config.ExpectFailures {
 		// Ignore the diagnostics returned from the reference parsing, these
 		// references will have been checked earlier in the process by the
 		// validate stage so we don't need to do that again here.
@@ -469,9 +433,32 @@ func (run *Run) ValidateExpectedFailures(originals tfdiags.Diagnostics) tfdiags.
 				Summary:  "Missing expected failure",
 				Detail:   fmt.Sprintf("The checkable object, %s, was expected to report an error but did not.", addr.String()),
 				Subject:  sourceRanges.Get(addr).ToHCL().Ptr(),
+				Extra:    missingExpectedFailure(true),
 			})
 		}
 	}
 
 	return diags
+}
+
+// DiagnosticExtraFromMissingExpectedFailure provides an interface for diagnostic ExtraInfo to
+// denote that a diagnostic was generated as a result of a missing expected failure.
+type DiagnosticExtraFromMissingExpectedFailure interface {
+	DiagnosticFromMissingExpectedFailure() bool
+}
+
+// DiagnosticFromMissingExpectedFailure checks if the provided diagnostic
+// is a result of a missing expected failure.
+func DiagnosticFromMissingExpectedFailure(diag tfdiags.Diagnostic) bool {
+	maybe := tfdiags.ExtraInfo[DiagnosticExtraFromMissingExpectedFailure](diag)
+	if maybe == nil {
+		return false
+	}
+	return maybe.DiagnosticFromMissingExpectedFailure()
+}
+
+type missingExpectedFailure bool
+
+func (missingExpectedFailure) DiagnosticFromMissingExpectedFailure() bool {
+	return true
 }

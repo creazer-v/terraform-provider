@@ -38,11 +38,11 @@ func assertObjectCompatible(schema *configschema.Block, planned, actual cty.Valu
 	}
 
 	if planned.IsNull() && !actual.IsNull() {
-		errs = append(errs, path.NewErrorf(fmt.Sprintf("%swas absent, but now present", atRoot)))
+		errs = append(errs, path.NewErrorf("%swas absent, but now present", atRoot))
 		return errs
 	}
 	if actual.IsNull() && !planned.IsNull() {
-		errs = append(errs, path.NewErrorf(fmt.Sprintf("%swas present, but now absent", atRoot)))
+		errs = append(errs, path.NewErrorf("%swas present, but now absent", atRoot))
 		return errs
 	}
 	if planned.IsNull() {
@@ -366,6 +366,14 @@ func assertSetValuesCompatible(planned, actual cty.Value, path cty.Path, f func(
 	beqs := make([]bool, len(bs))
 	for ai, av := range as {
 		for bi, bv := range bs {
+			if aeqs[ai] && beqs[bi] {
+				// because the best we can do is check that a value correlates
+				// with some other value in the other set, one or both values
+				// might have already been matched. If they have both matched in
+				// some way there's no need run the check again.
+				continue
+			}
+
 			if f(av, bv) {
 				aeqs[ai] = true
 				beqs[bi] = true

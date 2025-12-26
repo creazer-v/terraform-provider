@@ -172,9 +172,9 @@ func testCloudState(t *testing.T) *State {
 	b, bCleanup := testBackendWithName(t)
 	defer bCleanup()
 
-	raw, err := b.StateMgr(testBackendSingleWorkspaceName)
-	if err != nil {
-		t.Fatalf("error: %v", err)
+	raw, sDiags := b.StateMgr(testBackendSingleWorkspaceName)
+	if sDiags.HasErrors() {
+		t.Fatalf("error: %v", sDiags.Err())
 	}
 
 	return raw.(*State)
@@ -276,6 +276,7 @@ func testBackend(t *testing.T, obj cty.Value, handlers map[string]func(http.Resp
 	b.client.TaskStages = mc.TaskStages
 	b.client.PolicySetOutcomes = mc.PolicySetOutcomes
 	b.client.PolicyChecks = mc.PolicyChecks
+	b.client.QueryRuns = mc.QueryRuns
 	b.client.Runs = mc.Runs
 	b.client.RunEvents = mc.RunEvents
 	b.client.StateVersions = mc.StateVersions
@@ -348,6 +349,7 @@ func testUnconfiguredBackend(t *testing.T) (*Cloud, func()) {
 	b.client.Plans = mc.Plans
 	b.client.PolicySetOutcomes = mc.PolicySetOutcomes
 	b.client.PolicyChecks = mc.PolicyChecks
+	b.client.QueryRuns = mc.QueryRuns
 	b.client.Runs = mc.Runs
 	b.client.RunEvents = mc.RunEvents
 	b.client.StateVersions = mc.StateVersions
@@ -378,7 +380,7 @@ func testLocalBackend(t *testing.T, cloud *Cloud) backendrun.OperationsBackend {
 	p := backendLocal.TestLocalProvider(t, b, "null", providers.ProviderSchema{
 		ResourceTypes: map[string]providers.Schema{
 			"null_resource": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"id": {Type: cty.String, Computed: true},
 					},
@@ -617,7 +619,7 @@ func (v *unparsedVariableValue) ParseVariableValue(mode configs.VariableParsingM
 	}, tfdiags.Diagnostics{}
 }
 
-// testVariable returns a backend.UnparsedVariableValue used for testing.
+// testVariable returns a backendrun.UnparsedVariableValue used for testing.
 func testVariables(s terraform.ValueSourceType, vs ...string) map[string]backendrun.UnparsedVariableValue {
 	vars := make(map[string]backendrun.UnparsedVariableValue, len(vs))
 	for _, v := range vs {

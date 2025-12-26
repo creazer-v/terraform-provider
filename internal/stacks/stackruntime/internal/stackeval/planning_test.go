@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -171,11 +170,11 @@ func TestPlanning_DestroyMode(t *testing.T) {
 				return &providerTesting.MockProvider{
 					GetProviderSchemaResponse: &providers.GetProviderSchemaResponse{
 						Provider: providers.Schema{
-							Block: &configschema.Block{},
+							Body: &configschema.Block{},
 						},
 						ResourceTypes: map[string]providers.Schema{
 							"test": {
-								Block: resourceTypeSchema,
+								Body: resourceTypeSchema,
 							},
 						},
 						ServerCapabilities: providers.ServerCapabilities{
@@ -250,8 +249,8 @@ func TestPlanning_DestroyMode(t *testing.T) {
 	plan, diags := testPlan(t, main)
 	assertNoDiagnostics(t, diags)
 
-	aCmpPlan := plan.Components.Get(aComponentInstAddr)
-	bCmpPlan := plan.Components.Get(bComponentInstAddr)
+	aCmpPlan := plan.GetComponent(aComponentInstAddr)
+	bCmpPlan := plan.GetComponent(bComponentInstAddr)
 	if aCmpPlan == nil || bCmpPlan == nil {
 		t.Fatalf(
 			"incomplete plan\n%s: %#v\n%s: %#v",
@@ -271,7 +270,9 @@ func TestPlanning_DestroyMode(t *testing.T) {
 
 	if planSrc := aPlan.Changes.ResourceInstance(aResourceInstAddr.Item); planSrc != nil {
 		rAddr := aResourceInstAddr
-		plan, err := planSrc.Decode(resourceTypeSchema.ImpliedType())
+		plan, err := planSrc.Decode(providers.Schema{
+			Body: resourceTypeSchema,
+		})
 		if err != nil {
 			t.Fatalf("can't decode change for %s: %s", rAddr, err)
 		}
@@ -295,7 +296,9 @@ func TestPlanning_DestroyMode(t *testing.T) {
 
 	if planSrc := bPlan.Changes.ResourceInstance(bResourceInstAddr.Item); planSrc != nil {
 		rAddr := bResourceInstAddr
-		plan, err := planSrc.Decode(resourceTypeSchema.ImpliedType())
+		plan, err := planSrc.Decode(providers.Schema{
+			Body: resourceTypeSchema,
+		})
 		if err != nil {
 			t.Fatalf("can't decode change for %s: %s", rAddr, err)
 		}
@@ -358,7 +361,7 @@ func TestPlanning_RequiredComponents(t *testing.T) {
 				return &providerTesting.MockProvider{
 					GetProviderSchemaResponse: &providers.GetProviderSchemaResponse{
 						Provider: providers.Schema{
-							Block: &configschema.Block{
+							Body: &configschema.Block{
 								Attributes: map[string]*configschema.Attribute{
 									"in": {
 										Type:     cty.Map(cty.String),
@@ -408,8 +411,6 @@ func TestPlanning_RequiredComponents(t *testing.T) {
 		plan, diags := testPlan(t, main)
 		assertNoDiagnostics(t, diags)
 
-		componentPlans := plan.Components
-
 		tests := []struct {
 			component        stackaddrs.AbsComponent
 			wantDependencies []stackaddrs.AbsComponent
@@ -449,7 +450,7 @@ func TestPlanning_RequiredComponents(t *testing.T) {
 						Component: test.component.Item,
 					},
 				}
-				cp := componentPlans.Get(instAddr)
+				cp := plan.GetComponent(instAddr)
 				{
 					got := cp.Dependencies
 					want := collections.NewSet[stackaddrs.AbsComponent]()
@@ -502,7 +503,7 @@ func TestPlanning_RequiredComponents(t *testing.T) {
 					if stack == nil {
 						t.Fatalf("no declaration for %s", test.componentAddr.Stack)
 					}
-					component := stack.Component(ctx, test.componentAddr.Item)
+					component := stack.Component(test.componentAddr.Item)
 					if component == nil {
 						t.Fatalf("no declaration for %s", test.componentAddr)
 					}
@@ -545,11 +546,11 @@ func TestPlanning_DeferredChangesPropagation(t *testing.T) {
 				return &providerTesting.MockProvider{
 					GetProviderSchemaResponse: &providers.GetProviderSchemaResponse{
 						Provider: providers.Schema{
-							Block: &configschema.Block{},
+							Body: &configschema.Block{},
 						},
 						ResourceTypes: map[string]providers.Schema{
 							"test": {
-								Block: &configschema.Block{},
+								Body: &configschema.Block{},
 							},
 						},
 					},
@@ -587,11 +588,11 @@ func TestPlanning_DeferredChangesPropagation(t *testing.T) {
 		plan, diags := testPlan(t, main)
 		assertNoErrors(t, diags)
 
-		firstPlan := plan.Components.Get(componentFirstInstAddr)
+		firstPlan := plan.GetComponent(componentFirstInstAddr)
 		if firstPlan.PlanComplete {
 			t.Error("first component has a complete plan; should be incomplete because it has deferred actions")
 		}
-		secondPlan := plan.Components.Get(componentSecondInstAddr)
+		secondPlan := plan.GetComponent(componentSecondInstAddr)
 		if secondPlan.PlanComplete {
 			t.Error("second component has a complete plan; should be incomplete because everything in it should've been deferred")
 		}
@@ -635,7 +636,7 @@ func TestPlanning_RemoveDataResource(t *testing.T) {
 				GetProviderSchemaResponse: &providers.GetProviderSchemaResponse{
 					DataSources: map[string]providers.Schema{
 						"test": {
-							Block: &configschema.Block{},
+							Body: &configschema.Block{},
 						},
 					},
 				},
@@ -768,7 +769,7 @@ func TestPlanning_RemoveDataResource(t *testing.T) {
 		// address for this data resource, but no planned action because
 		// dropping a data resource from the state is not an "action" in the
 		// usual sense (it doesn't cause any calls to the provider).
-		mainPlan := plan.Components.Get(stackaddrs.AbsComponentInstance{
+		mainPlan := plan.GetComponent(stackaddrs.AbsComponentInstance{
 			Stack: stackaddrs.RootStackInstance,
 			Item: stackaddrs.ComponentInstance{
 				Component: stackaddrs.Component{Name: "main"},
@@ -832,7 +833,7 @@ func TestPlanning_PathValues(t *testing.T) {
 			t.Fatalf("unexpected diagnostics: %s", diags)
 		}
 
-		component, ok := plan.Components.GetOk(stackaddrs.AbsComponentInstance{
+		component := plan.GetComponent(stackaddrs.AbsComponentInstance{
 			Stack: stackaddrs.RootStackInstance,
 			Item: stackaddrs.ComponentInstance{
 				Component: stackaddrs.Component{
@@ -841,7 +842,7 @@ func TestPlanning_PathValues(t *testing.T) {
 				Key: addrs.NoKey,
 			},
 		})
-		if !ok {
+		if component == nil {
 			t.Fatalf("component not found in plan")
 		}
 
@@ -850,17 +851,9 @@ func TestPlanning_PathValues(t *testing.T) {
 			t.Fatalf("failed to get current working directory: %s", err)
 		}
 
-		normalizePath := func(path string) string {
-			rel, err := filepath.Rel(cwd, path)
-			if err != nil {
-				t.Errorf("rel(%s,%s): %s", cwd, path, err)
-				return path
-			}
-			return rel
-		}
-
+		// path.cwd should be absolute and all others should be relative, as per documentation.
 		expected := map[string]string{
-			"cwd":          ".",
+			"cwd":          cwd,
 			"root":         "testdata/sourcebundle/planning/path_values/module",       // this is the root module of the component
 			"module":       "testdata/sourcebundle/planning/path_values/module",       // this is the root module
 			"child_root":   "testdata/sourcebundle/planning/path_values/module",       // should be the same for all modules
@@ -868,11 +861,11 @@ func TestPlanning_PathValues(t *testing.T) {
 		}
 
 		actual := map[string]string{
-			"cwd":          normalizePath(component.PlannedOutputValues[addrs.OutputValue{Name: "cwd"}].AsString()),
-			"root":         normalizePath(component.PlannedOutputValues[addrs.OutputValue{Name: "root"}].AsString()),
-			"module":       normalizePath(component.PlannedOutputValues[addrs.OutputValue{Name: "module"}].AsString()),
-			"child_root":   normalizePath(component.PlannedOutputValues[addrs.OutputValue{Name: "child_root"}].AsString()),
-			"child_module": normalizePath(component.PlannedOutputValues[addrs.OutputValue{Name: "child_module"}].AsString()),
+			"cwd":          component.PlannedOutputValues[addrs.OutputValue{Name: "cwd"}].AsString(),
+			"root":         component.PlannedOutputValues[addrs.OutputValue{Name: "root"}].AsString(),
+			"module":       component.PlannedOutputValues[addrs.OutputValue{Name: "module"}].AsString(),
+			"child_root":   component.PlannedOutputValues[addrs.OutputValue{Name: "child_root"}].AsString(),
+			"child_module": component.PlannedOutputValues[addrs.OutputValue{Name: "child_module"}].AsString(),
 		}
 
 		if cmp.Diff(expected, actual) != "" {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"maps"
 	"sort"
 	"strings"
 
@@ -44,9 +45,9 @@ func (b *Local) localRun(op *backendrun.Operation) (*backendrun.LocalRun, *confi
 
 	// Get the latest state.
 	log.Printf("[TRACE] backend/local: requesting state manager for workspace %q", op.Workspace)
-	s, err := b.StateMgr(op.Workspace)
-	if err != nil {
-		diags = diags.Append(fmt.Errorf("error loading state: %w", err))
+	s, sDiags := b.StateMgr(op.Workspace)
+	if sDiags.HasErrors() {
+		diags = diags.Append(fmt.Errorf("error loading state: %w", sDiags.Err()))
 		return nil, nil, nil, diags
 	}
 	log.Printf("[TRACE] backend/local: requesting state lock for workspace %q", op.Workspace)
@@ -131,7 +132,9 @@ func (b *Local) localRun(op *backendrun.Operation) (*backendrun.LocalRun, *confi
 		// If validation is enabled, validate
 		if b.OpValidation {
 			log.Printf("[TRACE] backend/local: running validation operation")
-			validateDiags := ret.Core.Validate(ret.Config, nil)
+			// TODO: Implement query validate command. op.Query is false when running the command "terraform validate"
+			opts := &terraform.ValidateOpts{Query: op.Query}
+			validateDiags := ret.Core.Validate(ret.Config, opts)
 			diags = diags.Append(validateDiags)
 		}
 	}
@@ -200,11 +203,13 @@ func (b *Local) localRunDirect(op *backendrun.Operation, run *backendrun.LocalRu
 	planOpts := &terraform.PlanOpts{
 		Mode:               op.PlanMode,
 		Targets:            op.Targets,
+		ActionTargets:      op.ActionTargets,
 		ForceReplace:       op.ForceReplace,
 		SetVariables:       variables,
 		SkipRefresh:        op.Type != backendrun.OperationTypeRefresh && !op.PlanRefresh,
 		GenerateConfigPath: op.GenerateConfigOut,
 		DeferralAllowed:    op.DeferralAllowed,
+		Query:              op.Query,
 	}
 	run.PlanOpts = planOpts
 
@@ -400,9 +405,8 @@ func (b *Local) interactiveCollectVariables(ctx context.Context, existing map[st
 	// variable's value.
 	sort.Strings(needed) // prompt in lexical order
 	ret := make(map[string]backendrun.UnparsedVariableValue, len(vcs))
-	for k, v := range existing {
-		ret[k] = v
-	}
+	maps.Copy(ret, existing) // don't use clone here, so we can have a non-nil map
+
 	for _, name := range needed {
 		vc := vcs[name]
 		query := fmt.Sprintf("var.%s", name)
@@ -467,9 +471,8 @@ func (b *Local) stubUnsetRequiredVariables(existing map[string]backendrun.Unpars
 
 	// If we get down here then there's at least one variable value to add.
 	ret := make(map[string]backendrun.UnparsedVariableValue, len(vcs))
-	for k, v := range existing {
-		ret[k] = v
-	}
+	maps.Copy(ret, existing) // don't use clone here, so we can return a non-nil map
+
 	for name, vc := range vcs {
 		if !vc.Required() {
 			continue

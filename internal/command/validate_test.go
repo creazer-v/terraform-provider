@@ -28,7 +28,7 @@ func setupTest(t *testing.T, fixturepath string, args ...string) (*terminal.Test
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"ami": {Type: cty.String, Optional: true},
 					},
@@ -73,7 +73,7 @@ func TestValidateCommandWithTfvarsFile(t *testing.T) {
 	// requires scanning the current working directory by validate command.
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("validate-valid/with-tfvars-file"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	view, done := testView(t)
 	c := &ValidateCommand{
@@ -120,7 +120,7 @@ func TestValidateFailingCommandMissingVariable(t *testing.T) {
 	}
 }
 
-func TestSameProviderMutipleTimesShouldFail(t *testing.T) {
+func TestSameProviderMultipleTimesShouldFail(t *testing.T) {
 	output, code := setupTest(t, "validate-invalid/multiple_providers")
 	if code != 1 {
 		t.Fatalf("Should have failed: %d\n\n%s", code, output.Stderr())
@@ -260,7 +260,7 @@ func TestValidateWithInvalidTestModule(t *testing.T) {
 
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath(path.Join("test", "invalid-module")), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	streams, done := terminal.StreamsForTesting(t)
 	view := views.NewView(streams)
@@ -317,7 +317,7 @@ func TestValidateWithInvalidOverrides(t *testing.T) {
 
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath(path.Join("test", "invalid-overrides")), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	streams, done := terminal.StreamsForTesting(t)
 	view := views.NewView(streams)
@@ -448,4 +448,212 @@ func TestValidate_json(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateWithInvalidListResource(t *testing.T) {
+	td := t.TempDir()
+	cases := []struct {
+		name      string
+		path      string
+		wantError string
+		args      []string
+		code      int
+	}{
+		{
+			name: "invalid-traversal with validate -query command",
+			path: "query/invalid-traversal",
+			wantError: `
+Error: Invalid list resource traversal
+
+  on main.tfquery.hcl line 19, in list "test_instance" "test2":
+  19:   	ami = list.test_instance.test.state.instance_type
+
+The first step in the traversal for a list resource must be an attribute
+"data".
+`,
+			args: []string{"-query"},
+			code: 1,
+		},
+		{
+			name: "invalid-traversal with no -query",
+			path: "query/invalid-traversal",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			testCopyDir(t, testFixturePath(tc.path), td)
+			t.Chdir(td)
+
+			streams, done := terminal.StreamsForTesting(t)
+			view := views.NewView(streams)
+			ui := new(cli.MockUi)
+
+			provider := queryFixtureProvider()
+			providerSource, close := newMockProviderSource(t, map[string][]string{
+				"test": {"1.0.0"},
+			})
+			defer close()
+
+			meta := Meta{
+				testingOverrides: metaOverridesForProvider(provider),
+				Ui:               ui,
+				View:             view,
+				Streams:          streams,
+				ProviderSource:   providerSource,
+			}
+
+			init := &InitCommand{
+				Meta: meta,
+			}
+
+			if code := init.Run(nil); code != 0 {
+				t.Fatalf("expected status code 0 but got %d: %s", code, ui.ErrorWriter)
+			}
+
+			c := &ValidateCommand{
+				Meta: meta,
+			}
+
+			var args []string
+			args = append(args, "-no-color")
+			args = append(args, tc.args...)
+
+			code := c.Run(args)
+			output := done(t)
+
+			if code != tc.code {
+				t.Fatalf("Expected status code %d but got %d: %s", tc.code, code, output.Stderr())
+			}
+
+			if diff := cmp.Diff(tc.wantError, output.Stderr()); diff != "" {
+				t.Fatalf("Expected error string %q but got %q\n\ndiff: \n%s", tc.wantError, output.Stderr(), diff)
+			}
+		})
+	}
+}
+
+func TestValidate_backendBlocks(t *testing.T) {
+	t.Run("invalid when block contains a repeated attribute", func(t *testing.T) {
+		output, code := setupTest(t, "invalid-backend-configuration/repeated-attr")
+		if code != 1 {
+			t.Fatalf("unexpected successful exit code %d\n\n%s", code, output.Stdout())
+		}
+		expectedErr := "Error: Attribute redefined"
+		if !strings.Contains(output.Stderr(), expectedErr) {
+			t.Fatalf("unexpected error content: wanted %q, got: %s",
+				expectedErr,
+				output.Stderr(),
+			)
+		}
+	})
+
+	// TODO: Should this validation be added?
+	t.Run("NOT invalid when the backend type is unknown", func(t *testing.T) {
+		output, code := setupTest(t, "invalid-backend-configuration/unknown-backend-type")
+		if code != 0 {
+			t.Fatalf("expected a successful exit code %d\n\n%s", code, output.Stderr())
+		}
+		expectedMsg := "Success! The configuration is valid."
+		if !strings.Contains(output.Stdout(), expectedMsg) {
+			t.Fatalf("unexpected output content: wanted %q, got: %s",
+				expectedMsg,
+				output.Stdout(),
+			)
+		}
+	})
+
+	// Backend blocks aren't validated using their schemas currently.
+	// TODO: Should this validation be added?
+	t.Run("NOT invalid when there's an unknown attribute present", func(t *testing.T) {
+		output, code := setupTest(t, "invalid-backend-configuration/unknown-attr")
+		if code != 0 {
+			t.Fatalf("expected a successful exit code %d\n\n%s", code, output.Stderr())
+		}
+		expectedMsg := "Success! The configuration is valid."
+		if !strings.Contains(output.Stdout(), expectedMsg) {
+			t.Fatalf("unexpected output content: wanted %q, got: %s",
+				expectedMsg,
+				output.Stdout(),
+			)
+		}
+	})
+}
+
+// Resources are validated using their schemas, so unknown or missing required attributes are identified.
+func TestValidate_resourceBlock(t *testing.T) {
+	t.Run("invalid when block contains a repeated attribute", func(t *testing.T) {
+		output, code := setupTest(t, "invalid-resource-configuration/repeated-attr")
+		if code != 1 {
+			t.Fatalf("unexpected successful exit code %d\n\n%s", code, output.Stdout())
+		}
+		expectedErr := "Error: Attribute redefined"
+		if !strings.Contains(output.Stderr(), expectedErr) {
+			t.Fatalf("unexpected error content: wanted %q, got: %s",
+				expectedErr,
+				output.Stderr(),
+			)
+		}
+	})
+
+	t.Run("invalid when there's an unknown attribute present", func(t *testing.T) {
+		output, code := setupTest(t, "invalid-resource-configuration/unknown-attr")
+		if code != 1 {
+			t.Fatalf("unexpected successful exit code %d\n\n%s", code, output.Stdout())
+		}
+		expectedErr := "Error: Unsupported argument"
+		if !strings.Contains(output.Stderr(), expectedErr) {
+			t.Fatalf("unexpected error content: wanted %q, got: %s",
+				expectedErr,
+				output.Stderr(),
+			)
+		}
+	})
+
+	t.Run("invalid when a required attribute is unset", func(t *testing.T) {
+		view, done := testView(t)
+		p := testProvider()
+		p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
+			ResourceTypes: map[string]providers.Schema{
+				"test_instance": {
+					Body: &configschema.Block{
+						Attributes: map[string]*configschema.Attribute{
+							"ami": {Type: cty.String, Required: true},
+						},
+						BlockTypes: map[string]*configschema.NestedBlock{
+							"network_interface": {
+								Nesting: configschema.NestingList,
+								Block: configschema.Block{
+									Attributes: map[string]*configschema.Attribute{
+										"device_index": {Type: cty.String, Optional: true},
+										"description":  {Type: cty.String, Optional: true},
+										"name":         {Type: cty.String, Optional: true},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		c := &ValidateCommand{
+			Meta: Meta{
+				testingOverrides: metaOverridesForProvider(p),
+				View:             view,
+			},
+		}
+
+		args := []string{"-no-color", testFixturePath("invalid-resource-configuration/missing-required-attr")}
+		code := c.Run(args)
+		output := done(t)
+		if code != 1 {
+			t.Fatalf("expected non-successful exit code %d\n\n%s", code, output.Stdout())
+		}
+		expectedErr := "Error: Missing required argument"
+		if !strings.Contains(output.Stderr(), expectedErr) {
+			t.Fatalf("unexpected error content: wanted %q, got: %s",
+				expectedErr,
+				output.Stderr(),
+			)
+		}
+	})
 }

@@ -27,7 +27,7 @@ import (
 func TestGraph_planPhase(t *testing.T) {
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("graph"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	ui := new(cli.MockUi)
 	streams, closeStreams := terminal.StreamsForTesting(t)
@@ -53,7 +53,7 @@ func TestGraph_planPhase(t *testing.T) {
 func TestGraph_cyclic(t *testing.T) {
 	td := t.TempDir()
 	testCopyDir(t, testFixturePath("graph-cyclic"), td)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	tests := []struct {
 		name     string
@@ -189,7 +189,7 @@ func TestGraph_multipleArgs(t *testing.T) {
 func TestGraph_noConfig(t *testing.T) {
 	td := t.TempDir()
 	os.MkdirAll(td, 0755)
-	defer testChdir(t, td)()
+	t.Chdir(td)
 
 	streams, closeStreams := terminal.StreamsForTesting(t)
 	defer closeStreams(t)
@@ -212,7 +212,7 @@ func TestGraph_noConfig(t *testing.T) {
 
 func TestGraph_resourcesOnly(t *testing.T) {
 	wd := tempWorkingDirFixture(t, "graph-interesting")
-	defer testChdir(t, wd.RootModuleDir())()
+	t.Chdir(wd.RootModuleDir())
 
 	// The graph-interesting fixture has a child module, so we'll need to
 	// run the module installer just to get the working directory set up
@@ -234,7 +234,7 @@ func TestGraph_resourcesOnly(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"foo": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"arg": {
 							Type:     cty.String,
@@ -292,7 +292,8 @@ digraph G {
 }
 
 func TestGraph_applyPhaseSavedPlan(t *testing.T) {
-	testCwd(t)
+	tmp := t.TempDir()
+	t.Chdir(tmp)
 
 	emptyObj, err := plans.NewDynamicValue(cty.EmptyObjectVal, cty.EmptyObject)
 	if err != nil {
@@ -324,7 +325,7 @@ func TestGraph_applyPhaseSavedPlan(t *testing.T) {
 		},
 	})
 
-	plan.Backend = plans.Backend{
+	plan.Backend = &plans.Backend{
 		// Doesn't actually matter since we aren't going to activate the backend
 		// for this command anyway, but we need something here for the plan
 		// file writer to succeed.

@@ -19,7 +19,7 @@ import (
 )
 
 func TestResource(t *testing.T) {
-	if err := dataSourceRemoteStateGetSchema().Block.InternalValidate(); err != nil {
+	if err := dataSourceRemoteStateGetSchema().Body.InternalValidate(); err != nil {
 		t.Fatalf("err: %s", err)
 	}
 }
@@ -290,7 +290,7 @@ func TestState_basic(t *testing.T) {
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			schema := dataSourceRemoteStateGetSchema().Block
+			schema := dataSourceRemoteStateGetSchema().Body
 			config, err := schema.CoerceValue(test.Config)
 			if err != nil {
 				t.Fatalf("unexpected error: %s", err)
@@ -335,7 +335,7 @@ func TestState_validation(t *testing.T) {
 		overrideBackendFactories = nil
 	}()
 
-	schema := dataSourceRemoteStateGetSchema().Block
+	schema := dataSourceRemoteStateGetSchema().Body
 	config, err := schema.CoerceValue(cty.ObjectVal(map[string]cty.Value{
 		"backend": cty.StringVal("failsconfigure"),
 		"config":  cty.EmptyObjectVal,
@@ -369,14 +369,14 @@ func (b backendFailsConfigure) Configure(config cty.Value) tfdiags.Diagnostics {
 	return diags
 }
 
-func (b backendFailsConfigure) StateMgr(workspace string) (statemgr.Full, error) {
-	return nil, fmt.Errorf("StateMgr not implemented")
+func (b backendFailsConfigure) StateMgr(workspace string) (statemgr.Full, tfdiags.Diagnostics) {
+	return nil, tfdiags.Diagnostics{}.Append(fmt.Errorf("StateMgr not implemented"))
 }
 
-func (b backendFailsConfigure) DeleteWorkspace(name string, _ bool) error {
-	return fmt.Errorf("DeleteWorkspace not implemented")
+func (b backendFailsConfigure) DeleteWorkspace(name string, _ bool) tfdiags.Diagnostics {
+	return tfdiags.Diagnostics{}.Append(fmt.Errorf("DeleteWorkspace not implemented"))
 }
 
-func (b backendFailsConfigure) Workspaces() ([]string, error) {
-	return nil, fmt.Errorf("Workspaces not implemented")
+func (b backendFailsConfigure) Workspaces() ([]string, tfdiags.Diagnostics) {
+	return nil, tfdiags.Diagnostics{}.Append(fmt.Errorf("Workspaces not implemented"))
 }

@@ -254,24 +254,24 @@ func TestRemote_addAndRemoveWorkspacesDefault(t *testing.T) {
 	b, bCleanup := testBackendDefault(t)
 	defer bCleanup()
 
-	if _, err := b.Workspaces(); err != backend.ErrWorkspacesNotSupported {
-		t.Fatalf("expected error %v, got %v", backend.ErrWorkspacesNotSupported, err)
+	if _, diags := b.Workspaces(); !diags.HasErrors() || diags.Err().Error() != backend.ErrWorkspacesNotSupported.Error() {
+		t.Fatalf("expected error %v, got %v", backend.ErrWorkspacesNotSupported, diags.Err())
 	}
 
-	if _, err := b.StateMgr(backend.DefaultStateName); err != nil {
-		t.Fatalf("expected no error, got %v", err)
+	if _, sDiags := b.StateMgr(backend.DefaultStateName); sDiags.HasErrors() {
+		t.Fatalf("expected no error, got %v", sDiags.Err())
 	}
 
-	if _, err := b.StateMgr("prod"); err != backend.ErrWorkspacesNotSupported {
-		t.Fatalf("expected error %v, got %v", backend.ErrWorkspacesNotSupported, err)
+	if _, sDiags := b.StateMgr("prod"); sDiags.Err().Error() != backend.ErrWorkspacesNotSupported.Error() {
+		t.Fatalf("expected error %v, got %v", backend.ErrWorkspacesNotSupported, sDiags.Err())
 	}
 
-	if err := b.DeleteWorkspace(backend.DefaultStateName, true); err != nil {
-		t.Fatalf("expected no error, got %v", err)
+	if diags := b.DeleteWorkspace(backend.DefaultStateName, true); diags.HasErrors() {
+		t.Fatalf("expected no error, got %v", diags.Err())
 	}
 
-	if err := b.DeleteWorkspace("prod", true); err != backend.ErrWorkspacesNotSupported {
-		t.Fatalf("expected error %v, got %v", backend.ErrWorkspacesNotSupported, err)
+	if diags := b.DeleteWorkspace("prod", true); !diags.HasErrors() || diags.Err().Error() != backend.ErrWorkspacesNotSupported.Error() {
+		t.Fatalf("expected error %v, got %v", backend.ErrWorkspacesNotSupported, diags.Err())
 	}
 }
 
@@ -279,9 +279,9 @@ func TestRemote_addAndRemoveWorkspacesNoDefault(t *testing.T) {
 	b, bCleanup := testBackendNoDefault(t)
 	defer bCleanup()
 
-	states, err := b.Workspaces()
-	if err != nil {
-		t.Fatal(err)
+	states, wDiags := b.Workspaces()
+	if wDiags.HasErrors() {
+		t.Fatal(wDiags.Err())
 	}
 
 	expectedWorkspaces := []string(nil)
@@ -289,18 +289,18 @@ func TestRemote_addAndRemoveWorkspacesNoDefault(t *testing.T) {
 		t.Fatalf("expected states %#+v, got %#+v", expectedWorkspaces, states)
 	}
 
-	if _, err := b.StateMgr(backend.DefaultStateName); err != backend.ErrDefaultWorkspaceNotSupported {
-		t.Fatalf("expected error %v, got %v", backend.ErrDefaultWorkspaceNotSupported, err)
+	if _, sDiags := b.StateMgr(backend.DefaultStateName); sDiags.Err().Error() != backend.ErrDefaultWorkspaceNotSupported.Error() {
+		t.Fatalf("expected error %v, got %v", backend.ErrDefaultWorkspaceNotSupported, sDiags.Err())
 	}
 
 	expectedA := "test_A"
-	if _, err := b.StateMgr(expectedA); err != nil {
-		t.Fatal(err)
+	if _, sDiags := b.StateMgr(expectedA); sDiags.HasErrors() {
+		t.Fatal(sDiags.Err())
 	}
 
-	states, err = b.Workspaces()
-	if err != nil {
-		t.Fatal(err)
+	states, wDiags = b.Workspaces()
+	if wDiags.HasErrors() {
+		t.Fatal(wDiags.Err())
 	}
 
 	expectedWorkspaces = append(expectedWorkspaces, expectedA)
@@ -309,13 +309,13 @@ func TestRemote_addAndRemoveWorkspacesNoDefault(t *testing.T) {
 	}
 
 	expectedB := "test_B"
-	if _, err := b.StateMgr(expectedB); err != nil {
-		t.Fatal(err)
+	if _, sDiags := b.StateMgr(expectedB); sDiags.HasErrors() {
+		t.Fatal(sDiags.Err())
 	}
 
-	states, err = b.Workspaces()
-	if err != nil {
-		t.Fatal(err)
+	states, wDiags = b.Workspaces()
+	if wDiags.HasErrors() {
+		t.Fatal(wDiags.Err())
 	}
 
 	expectedWorkspaces = append(expectedWorkspaces, expectedB)
@@ -323,17 +323,17 @@ func TestRemote_addAndRemoveWorkspacesNoDefault(t *testing.T) {
 		t.Fatalf("expected %#+v, got %#+v", expectedWorkspaces, states)
 	}
 
-	if err := b.DeleteWorkspace(backend.DefaultStateName, true); err != backend.ErrDefaultWorkspaceNotSupported {
-		t.Fatalf("expected error %v, got %v", backend.ErrDefaultWorkspaceNotSupported, err)
+	if diags := b.DeleteWorkspace(backend.DefaultStateName, true); !diags.HasErrors() || diags.Err().Error() != backend.ErrDefaultWorkspaceNotSupported.Error() {
+		t.Fatalf("expected error %v, got %v", backend.ErrDefaultWorkspaceNotSupported, diags.Err())
 	}
 
-	if err := b.DeleteWorkspace(expectedA, true); err != nil {
-		t.Fatal(err)
+	if diags := b.DeleteWorkspace(expectedA, true); diags.HasErrors() {
+		t.Fatal(diags.Err())
 	}
 
-	states, err = b.Workspaces()
-	if err != nil {
-		t.Fatal(err)
+	states, wDiags = b.Workspaces()
+	if wDiags.HasErrors() {
+		t.Fatal(wDiags.Err())
 	}
 
 	expectedWorkspaces = []string{expectedB}
@@ -341,13 +341,13 @@ func TestRemote_addAndRemoveWorkspacesNoDefault(t *testing.T) {
 		t.Fatalf("expected %#+v got %#+v", expectedWorkspaces, states)
 	}
 
-	if err := b.DeleteWorkspace(expectedB, true); err != nil {
-		t.Fatal(err)
+	if diags := b.DeleteWorkspace(expectedB, true); diags.HasErrors() {
+		t.Fatal(diags.Err())
 	}
 
-	states, err = b.Workspaces()
-	if err != nil {
-		t.Fatal(err)
+	states, wDiags = b.Workspaces()
+	if wDiags.HasErrors() {
+		t.Fatal(wDiags.Err())
 	}
 
 	expectedWorkspaces = []string(nil)
@@ -496,8 +496,8 @@ func TestRemote_StateMgr_versionCheck(t *testing.T) {
 	}
 
 	// This should succeed
-	if _, err := b.StateMgr(backend.DefaultStateName); err != nil {
-		t.Fatalf("expected no error, got %v", err)
+	if _, sDiags := b.StateMgr(backend.DefaultStateName); sDiags.HasErrors() {
+		t.Fatalf("expected no error, got %v", sDiags.Err())
 	}
 
 	// Now change the remote workspace to a different Terraform version
@@ -514,8 +514,8 @@ func TestRemote_StateMgr_versionCheck(t *testing.T) {
 
 	// This should fail
 	want := `Remote workspace Terraform version "0.13.5" does not match local Terraform version "0.14.0"`
-	if _, err := b.StateMgr(backend.DefaultStateName); err.Error() != want {
-		t.Fatalf("wrong error\n got: %v\nwant: %v", err.Error(), want)
+	if _, sDiags := b.StateMgr(backend.DefaultStateName); sDiags.Err().Error() != want {
+		t.Fatalf("wrong error\n got: %v\nwant: %v", sDiags.Err().Error(), want)
 	}
 }
 
@@ -553,8 +553,8 @@ func TestRemote_StateMgr_versionCheckLatest(t *testing.T) {
 	}
 
 	// This should succeed despite not being a string match
-	if _, err := b.StateMgr(backend.DefaultStateName); err != nil {
-		t.Fatalf("expected no error, got %v", err)
+	if _, sDiags := b.StateMgr(backend.DefaultStateName); sDiags.HasErrors() {
+		t.Fatalf("expected no error, got %v", sDiags.Err())
 	}
 }
 
@@ -666,8 +666,103 @@ func TestRemote_VerifyWorkspaceTerraformVersion_workspaceErrors(t *testing.T) {
 	if len(diags) != 1 {
 		t.Fatal("expected diag, but none returned")
 	}
-	if got := diags.Err().Error(); !strings.Contains(got, "Error looking up workspace: Invalid Terraform version") {
+	if got := diags.Err().Error(); !strings.Contains(got, "The remote workspace specified an invalid Terraform version or constraint") {
 		t.Fatalf("unexpected error: %s", got)
+	}
+}
+
+func TestRemote_VerifyWorkspaceTerraformVersion_versionConstraint(t *testing.T) {
+	b, bCleanup := testBackendDefault(t)
+	defer bCleanup()
+
+	// Define our test case struct
+	type testCase struct {
+		terraformVersion  string
+		versionConstraint string
+		shouldSatisfy     bool
+		prerelease        string
+	}
+
+	// Create a slice of test cases
+	testCases := []testCase{
+		{
+			terraformVersion:  "1.8.0",
+			versionConstraint: "> 1.9.0",
+			shouldSatisfy:     false,
+			prerelease:        "",
+		},
+		{
+			terraformVersion:  "1.10.1",
+			versionConstraint: "~> 1.10.0",
+			shouldSatisfy:     true,
+			prerelease:        "",
+		},
+		{
+			terraformVersion:  "1.10.0",
+			versionConstraint: "> 1.9.0",
+			shouldSatisfy:     true,
+			prerelease:        "",
+		},
+		{
+			terraformVersion:  "1.8.0",
+			versionConstraint: "~> 1.9.0",
+			shouldSatisfy:     false,
+			prerelease:        "",
+		},
+		{
+			terraformVersion:  "1.10.0",
+			versionConstraint: "> v1.9.4",
+			shouldSatisfy:     false,
+			prerelease:        "dev",
+		},
+		{
+			terraformVersion:  "1.10.0",
+			versionConstraint: "> 1.10.0",
+			shouldSatisfy:     false,
+			prerelease:        "dev",
+		},
+	}
+
+	// Save and restore the actual version.
+	p := tfversion.Prerelease
+	v := tfversion.Version
+	defer func() {
+		tfversion.Prerelease = p
+		tfversion.Version = v
+	}()
+
+	// Now we loop through each test case, utilizing the values of each case
+	// to setup our test and assert accordingly.
+	for _, tc := range testCases {
+
+		tfversion.Prerelease = tc.prerelease
+		tfversion.Version = tc.terraformVersion
+
+		// Update the mock remote workspace Terraform version to be a version constraint string
+		if _, err := b.client.Workspaces.Update(
+			context.Background(),
+			b.organization,
+			b.workspace,
+			tfe.WorkspaceUpdateOptions{
+				TerraformVersion: tfe.String(tc.versionConstraint),
+			},
+		); err != nil {
+			t.Fatalf("error: %v", err)
+		}
+		diags := b.VerifyWorkspaceTerraformVersion(backend.DefaultStateName)
+
+		if tc.shouldSatisfy {
+			if len(diags) > 0 {
+				t.Fatalf("expected no diagnostics, but got: %v", diags.Err().Error())
+			}
+		} else {
+			if len(diags) == 0 {
+				t.Fatal("expected diagnostic, but none returned")
+			}
+			if got := diags.Err().Error(); !strings.Contains(got, "Terraform version mismatch") {
+				t.Fatalf("unexpected error: %s", got)
+			}
+		}
 	}
 }
 

@@ -5,6 +5,7 @@ package terraform
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
@@ -16,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform/internal/didyoumean"
 	"github.com/hashicorp/terraform/internal/instances"
 	"github.com/hashicorp/terraform/internal/lang/ephemeral"
+	"github.com/hashicorp/terraform/internal/lang/format"
 	"github.com/hashicorp/terraform/internal/lang/langrefs"
 	"github.com/hashicorp/terraform/internal/providers"
 	"github.com/hashicorp/terraform/internal/provisioners"
@@ -321,10 +323,10 @@ func (n *NodeValidatableResource) validateResource(ctx EvalContext) tfdiags.Diag
 	// in the provider abstraction.
 	switch n.Config.Mode {
 	case addrs.ManagedResourceMode:
-		schema, _ := providerSchema.SchemaForResourceType(n.Config.Mode, n.Config.Type)
-		if schema == nil {
+		schema := providerSchema.SchemaForResourceType(n.Config.Mode, n.Config.Type)
+		if schema.Body == nil {
 			var suggestion string
-			if dSchema, _ := providerSchema.SchemaForResourceType(addrs.DataResourceMode, n.Config.Type); dSchema != nil {
+			if dSchema := providerSchema.SchemaForResourceType(addrs.DataResourceMode, n.Config.Type); dSchema.Body != nil {
 				suggestion = fmt.Sprintf("\n\nDid you intend to use the data source %q? If so, declare this using a \"data\" block instead of a \"resource\" block.", n.Config.Type)
 			} else if len(providerSchema.ResourceTypes) > 0 {
 				suggestions := make([]string, 0, len(providerSchema.ResourceTypes))
@@ -345,19 +347,19 @@ func (n *NodeValidatableResource) validateResource(ctx EvalContext) tfdiags.Diag
 			return diags
 		}
 
-		configVal, _, valDiags := ctx.EvaluateBlock(n.Config.Config, schema, nil, keyData)
+		configVal, _, valDiags := ctx.EvaluateBlock(n.Config.Config, schema.Body, nil, keyData)
 		diags = diags.Append(valDiags)
 		if valDiags.HasErrors() {
 			return diags
 		}
 		diags = diags.Append(
-			validateResourceForbiddenEphemeralValues(ctx, configVal, schema).InConfigBody(n.Config.Config, n.Addr.String()),
+			validateResourceForbiddenEphemeralValues(ctx, configVal, schema.Body).InConfigBody(n.Config.Config, n.Addr.String()),
 		)
 
 		if n.Config.Managed != nil { // can be nil only in tests with poorly-configured mocks
 			for _, traversal := range n.Config.Managed.IgnoreChanges {
 				// validate the ignore_changes traversals apply.
-				moreDiags := schema.StaticValidateTraversal(traversal)
+				moreDiags := schema.Body.StaticValidateTraversal(traversal)
 				diags = diags.Append(moreDiags)
 
 				// ignore_changes cannot be used for Computed attributes,
@@ -366,9 +368,9 @@ func (n *NodeValidatableResource) validateResource(ctx EvalContext) tfdiags.Diag
 				// use that to check whether the Attribute is Computed and
 				// non-Optional.
 				if !diags.HasErrors() {
-					path := traversalToPath(traversal)
+					path, _ := traversalToPath(traversal)
 
-					attrSchema := schema.AttributeByPath(path)
+					attrSchema := schema.Body.AttributeByPath(path)
 
 					if attrSchema != nil && !attrSchema.Optional && attrSchema.Computed {
 						// ignore_changes uses absolute traversal syntax in config despite
@@ -389,22 +391,21 @@ func (n *NodeValidatableResource) validateResource(ctx EvalContext) tfdiags.Diag
 
 		// Use unmarked value for validate request
 		unmarkedConfigVal, _ := configVal.UnmarkDeep()
+		log.Printf("[TRACE] Validating config for %q", n.Addr)
 		req := providers.ValidateResourceConfigRequest{
-			TypeName: n.Config.Type,
-			Config:   unmarkedConfigVal,
-			ClientCapabilities: providers.ClientCapabilities{
-				WriteOnlyAttributesAllowed: true,
-			},
+			TypeName:           n.Config.Type,
+			Config:             unmarkedConfigVal,
+			ClientCapabilities: ctx.ClientCapabilities(),
 		}
 
 		resp := provider.ValidateResourceConfig(req)
 		diags = diags.Append(resp.Diagnostics.InConfigBody(n.Config.Config, n.Addr.String()))
 
 	case addrs.DataResourceMode:
-		schema, _ := providerSchema.SchemaForResourceType(n.Config.Mode, n.Config.Type)
-		if schema == nil {
+		schema := providerSchema.SchemaForResourceType(n.Config.Mode, n.Config.Type)
+		if schema.Body == nil {
 			var suggestion string
-			if dSchema, _ := providerSchema.SchemaForResourceType(addrs.ManagedResourceMode, n.Config.Type); dSchema != nil {
+			if dSchema := providerSchema.SchemaForResourceType(addrs.ManagedResourceMode, n.Config.Type); dSchema.Body != nil {
 				suggestion = fmt.Sprintf("\n\nDid you intend to use the managed resource type %q? If so, declare this using a \"resource\" block instead of a \"data\" block.", n.Config.Type)
 			} else if len(providerSchema.DataSources) > 0 {
 				suggestions := make([]string, 0, len(providerSchema.DataSources))
@@ -425,13 +426,13 @@ func (n *NodeValidatableResource) validateResource(ctx EvalContext) tfdiags.Diag
 			return diags
 		}
 
-		configVal, _, valDiags := ctx.EvaluateBlock(n.Config.Config, schema, nil, keyData)
+		configVal, _, valDiags := ctx.EvaluateBlock(n.Config.Config, schema.Body, nil, keyData)
 		diags = diags.Append(valDiags)
 		if valDiags.HasErrors() {
 			return diags
 		}
 		diags = diags.Append(
-			validateResourceForbiddenEphemeralValues(ctx, configVal, schema).InConfigBody(n.Config.Config, n.Addr.String()),
+			validateResourceForbiddenEphemeralValues(ctx, configVal, schema.Body).InConfigBody(n.Config.Config, n.Addr.String()),
 		)
 
 		// Use unmarked value for validate request
@@ -444,8 +445,8 @@ func (n *NodeValidatableResource) validateResource(ctx EvalContext) tfdiags.Diag
 		resp := provider.ValidateDataResourceConfig(req)
 		diags = diags.Append(resp.Diagnostics.InConfigBody(n.Config.Config, n.Addr.String()))
 	case addrs.EphemeralResourceMode:
-		schema, _ := providerSchema.SchemaForResourceType(n.Config.Mode, n.Config.Type)
-		if schema == nil {
+		schema := providerSchema.SchemaForResourceType(n.Config.Mode, n.Config.Type)
+		if schema.Body == nil {
 			diags = diags.Append(&hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Invalid ephemeral resource",
@@ -455,7 +456,7 @@ func (n *NodeValidatableResource) validateResource(ctx EvalContext) tfdiags.Diag
 			return diags
 		}
 
-		configVal, _, valDiags := ctx.EvaluateBlock(n.Config.Config, schema, nil, keyData)
+		configVal, _, valDiags := ctx.EvaluateBlock(n.Config.Config, schema.Body, nil, keyData)
 		diags = diags.Append(valDiags)
 		if valDiags.HasErrors() {
 			return diags
@@ -468,6 +469,54 @@ func (n *NodeValidatableResource) validateResource(ctx EvalContext) tfdiags.Diag
 		}
 
 		resp := provider.ValidateEphemeralResourceConfig(req)
+		diags = diags.Append(resp.Diagnostics.InConfigBody(n.Config.Config, n.Addr.String()))
+	case addrs.ListResourceMode:
+		schema := providerSchema.SchemaForListResourceType(n.Config.Type)
+		if schema.IsNil() {
+			diags = diags.Append(&hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Invalid list resource",
+				Detail:   fmt.Sprintf("The provider %s does not support list resource %q.", n.Provider().ForDisplay(), n.Config.Type),
+				Subject:  &n.Config.TypeRange,
+			})
+			return diags
+		}
+
+		blockVal, _, valDiags := ctx.EvaluateBlock(n.Config.Config, schema.FullSchema, nil, keyData)
+		diags = diags.Append(valDiags)
+		if valDiags.HasErrors() {
+			return diags
+		}
+
+		limit, _, limitDiags := newLimitEvaluator(true).EvaluateExpr(ctx, n.Config.List.Limit)
+		diags = diags.Append(limitDiags)
+		if limitDiags.HasErrors() {
+			return diags
+		}
+
+		includeResource, _, includeDiags := newIncludeRscEvaluator(true).EvaluateExpr(ctx, n.Config.List.IncludeResource)
+		diags = diags.Append(includeDiags)
+		if includeDiags.HasErrors() {
+			return diags
+		}
+
+		// Use unmarked value for validate request
+		unmarkedBlockVal, _ := blockVal.UnmarkDeep()
+
+		// if the config value is null, we still want to send a full object with all attributes being null
+		if !unmarkedBlockVal.IsNull() && unmarkedBlockVal.GetAttr("config").IsNull() {
+			mp := unmarkedBlockVal.AsValueMap()
+			mp["config"] = schema.ConfigSchema.EmptyValue()
+			unmarkedBlockVal = cty.ObjectVal(mp)
+		}
+		req := providers.ValidateListResourceConfigRequest{
+			TypeName:              n.Config.Type,
+			Config:                unmarkedBlockVal,
+			IncludeResourceObject: includeResource,
+			Limit:                 limit,
+		}
+
+		resp := provider.ValidateListResourceConfig(req)
 		diags = diags.Append(resp.Diagnostics.InConfigBody(n.Config.Config, n.Addr.String()))
 	}
 
@@ -576,6 +625,11 @@ func (n *NodeValidatableResource) validateImportTargets(ctx EvalContext) tfdiags
 		}
 
 		if imp.Config.ForEach != nil {
+			diags = diags.Append(validateImportForEachRef(n.Addr.Resource, imp.Config.ForEach))
+			if diags.HasErrors() {
+				return diags
+			}
+
 			forEachData, _, forEachDiags := newForEachEvaluator(imp.Config.ForEach, ctx, true).ImportValues()
 			diags = diags.Append(forEachDiags)
 			if forEachDiags.HasErrors() {
@@ -583,6 +637,7 @@ func (n *NodeValidatableResource) validateImportTargets(ctx EvalContext) tfdiags
 			}
 
 			for _, keyData := range forEachData {
+				var evalDiags tfdiags.Diagnostics
 				to, evalDiags := evalImportToExpression(imp.Config.To, keyData)
 				diags = diags.Append(evalDiags)
 				if diags.HasErrors() {
@@ -592,7 +647,20 @@ func (n *NodeValidatableResource) validateImportTargets(ctx EvalContext) tfdiags
 				if diags.HasErrors() {
 					return diags
 				}
-				_, evalDiags = evaluateImportIdExpression(imp.Config.ID, ctx, keyData, true)
+
+				if imp.Config.ID != nil {
+					_, evalDiags = evaluateImportIdExpression(imp.Config.ID, ctx, keyData, true)
+				} else if imp.Config.Identity != nil {
+					providerSchema, err := ctx.ProviderSchema(n.ResolvedProvider)
+					if err != nil {
+						diags = diags.Append(err)
+						return diags
+					}
+					schema := providerSchema.SchemaForResourceAddr(to.Resource.Resource)
+
+					_, evalDiags = evaluateImportIdentityExpression(imp.Config.Identity, schema.Identity, ctx, keyData, true)
+				}
+
 				diags = diags.Append(evalDiags)
 				if diags.HasErrors() {
 					return diags
@@ -612,7 +680,20 @@ func (n *NodeValidatableResource) validateImportTargets(ctx EvalContext) tfdiags
 				return diags
 			}
 
-			_, evalDiags := evaluateImportIdExpression(imp.Config.ID, ctx, EvalDataForNoInstanceKey, true)
+			var evalDiags tfdiags.Diagnostics
+			if imp.Config.ID != nil {
+				_, evalDiags = evaluateImportIdExpression(imp.Config.ID, ctx, EvalDataForNoInstanceKey, true)
+			} else if imp.Config.Identity != nil {
+				providerSchema, err := ctx.ProviderSchema(n.ResolvedProvider)
+				if err != nil {
+					diags = diags.Append(err)
+					return diags
+				}
+				schema := providerSchema.SchemaForResourceAddr(to.Resource.Resource)
+
+				_, evalDiags = evaluateImportIdentityExpression(imp.Config.Identity, schema.Identity, ctx, EvalDataForNoInstanceKey, true)
+			}
+
 			diags = diags.Append(evalDiags)
 			if diags.HasErrors() {
 				return diags
@@ -730,6 +811,21 @@ func validateDependsOn(ctx EvalContext, dependsOn []hcl.Traversal) (diags tfdiag
 			})
 		}
 
+		// We don't allow depends_on on actions because their ordering is depending on the resource
+		// that triggers them, therefore users should use a depends_on on the resource instead.
+
+		if ref != nil {
+			switch ref.Subject.(type) {
+			case addrs.Action, addrs.ActionInstance:
+				diags = diags.Append(&hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  "Invalid depends_on reference",
+					Detail:   "Actions can not be referenced in depends_on. Use depends_on on the resource that triggers the action instead.",
+					Subject:  traversal.SourceRange().Ptr(),
+				})
+			}
+		}
+
 		// The ref must also refer to something that exists. To test that,
 		// we'll just eval it and count on the fact that our evaluator will
 		// detect references to non-existent objects.
@@ -754,22 +850,38 @@ func validateDependsOn(ctx EvalContext, dependsOn []hcl.Traversal) (diags tfdiag
 func validateResourceForbiddenEphemeralValues(ctx EvalContext, value cty.Value, schema *configschema.Block) (diags tfdiags.Diagnostics) {
 	for _, path := range ephemeral.EphemeralValuePaths(value) {
 		attr := schema.AttributeByPath(path)
+
+		// If this attribute doesn't exist (usually through a dynamic type) or
+		// itself isn't write-only, it may be nested within a more complex type
+		// which is write-only. We need to walk upwards through the path
+		// segments and see of something wrapping this path is write-only.
+		for (attr == nil || !attr.WriteOnly) && len(path) > 1 {
+			path = path[:len(path)-1]
+			attr = schema.AttributeByPath((path))
+		}
+
+		// We know the config decoded, so the "attribute" exists in the
+		// schema somehow. If the ephemeral mark ended up being hoisted into
+		// a container however, especially if that container is a block,
+		// it's not actually an assignable attribute so we need to make a
+		// generic sounding error with a little more context because the
+		// AttributeValue diagnostic won't point to anything except the
+		// resource block.
 		if attr == nil {
 			diags = diags.Append(tfdiags.AttributeValue(
 				tfdiags.Error,
-				"Could not find schema for attribute",
-				"This is most likely a bug in Terraform, please report it.",
+				"Invalid use of ephemeral value",
+				fmt.Sprintf("Ephemeral values are not valid for %q, because it is not an assignable attribute.", strings.TrimPrefix(format.CtyPath(path), ".")),
 				path,
 			))
 		} else if !attr.WriteOnly {
 			diags = diags.Append(tfdiags.AttributeValue(
 				tfdiags.Error,
 				"Invalid use of ephemeral value",
-				"Ephemeral values are not valid in resource arguments, because resource instances must persist between Terraform phases.",
+				fmt.Sprintf("Ephemeral values are not valid for %q, because it is not a write-only attribute and must be persisted to state.", strings.TrimPrefix(format.CtyPath(path), ".")),
 				path,
 			))
 		}
-
 	}
 	return diags
 }

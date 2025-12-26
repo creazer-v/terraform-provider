@@ -5,12 +5,8 @@ package views
 
 import (
 	"bytes"
-	"encoding/xml"
 	"fmt"
 	"net/http"
-	"os"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/hashicorp/go-tfe"
@@ -75,7 +71,7 @@ type Test interface {
 	// addition, this function prints additional details about the current
 	// operation alongside the current state as the state will be missing newly
 	// created resources that also need to be handled manually.
-	FatalInterruptSummary(run *moduletest.Run, file *moduletest.File, states map[*moduletest.Run]*states.State, created []*plans.ResourceInstanceChangeSrc)
+	FatalInterruptSummary(run *moduletest.Run, file *moduletest.File, states map[string]*states.State, created []*plans.ResourceInstanceChangeSrc)
 
 	// TFCStatusUpdate prints a reassuring update, letting users know the latest
 	// status of their ongoing remote test run.
@@ -140,11 +136,15 @@ func (t *TestHuman) Conclusion(suite *moduletest.Suite) {
 		t.view.streams.Print(t.view.colorize.Color("[red]Failure![reset]"))
 	}
 
-	t.view.streams.Printf(" %d passed, %d failed", counts[moduletest.Pass], counts[moduletest.Fail]+counts[moduletest.Error])
-	if counts[moduletest.Skip] > 0 {
-		t.view.streams.Printf(", %d skipped.\n", counts[moduletest.Skip])
+	if suite.CommandMode != moduletest.CleanupMode {
+		t.view.streams.Printf(" %d passed, %d failed", counts[moduletest.Pass], counts[moduletest.Fail]+counts[moduletest.Error])
+		if counts[moduletest.Skip] > 0 {
+			t.view.streams.Printf(", %d skipped.\n", counts[moduletest.Skip])
+		} else {
+			t.view.streams.Println(".")
+		}
 	} else {
-		t.view.streams.Println(".")
+		t.view.streams.Println()
 	}
 }
 
@@ -212,7 +212,7 @@ func (t *TestHuman) Run(run *moduletest.Run, file *moduletest.File, progress mod
 			}
 		} else {
 			// We'll print the plan.
-			outputs, changed, drift, attrs, err := jsonplan.MarshalForRenderer(run.Verbose.Plan, schemas)
+			outputs, changed, drift, attrs, actions, err := jsonplan.MarshalForRenderer(run.Verbose.Plan, schemas)
 			if err != nil {
 				run.Diagnostics = run.Diagnostics.Append(tfdiags.Sourceless(
 					tfdiags.Warning,
@@ -227,6 +227,7 @@ func (t *TestHuman) Run(run *moduletest.Run, file *moduletest.File, progress mod
 					ResourceDrift:         drift,
 					ProviderSchemas:       jsonprovider.MarshalForRenderer(schemas),
 					RelevantAttributes:    attrs,
+					ActionInvocations:     actions,
 				}
 
 				var opts []plans.Quality
@@ -279,7 +280,8 @@ func (t *TestHuman) DestroySummary(diags tfdiags.Diagnostics, run *moduletest.Ru
 	}
 	t.Diagnostics(run, file, diags)
 
-	if state.HasManagedResourceInstanceObjects() {
+	skipCleanup := run != nil && run.Config.SkipCleanup
+	if state.HasManagedResourceInstanceObjects() && !skipCleanup {
 		// FIXME: This message says "resources" but this is actually a list
 		// of resource instance objects.
 		t.view.streams.Eprint(format.WordWrap(fmt.Sprintf("\nTerraform left the following resources in state after executing %s, and they need to be cleaned up manually:\n", identifier), t.view.errorColumns()))
@@ -305,12 +307,12 @@ func (t *TestHuman) FatalInterrupt() {
 	t.view.streams.Eprintln(format.WordWrap(fatalInterrupt, t.view.errorColumns()))
 }
 
-func (t *TestHuman) FatalInterruptSummary(run *moduletest.Run, file *moduletest.File, existingStates map[*moduletest.Run]*states.State, created []*plans.ResourceInstanceChangeSrc) {
+func (t *TestHuman) FatalInterruptSummary(run *moduletest.Run, file *moduletest.File, existingStates map[string]*states.State, created []*plans.ResourceInstanceChangeSrc) {
 	t.view.streams.Eprint(format.WordWrap(fmt.Sprintf("\nTerraform was interrupted while executing %s, and may not have performed the expected cleanup operations.\n", file.Name), t.view.errorColumns()))
 
 	// Print out the main state first, this is the state that isn't associated
 	// with a run block.
-	if state, exists := existingStates[nil]; exists && !state.Empty() {
+	if state, exists := existingStates[configs.TestMainStateIdentifier]; exists && !state.Empty() {
 		t.view.streams.Eprint(format.WordWrap("\nTerraform has already created the following resources from the module under test:\n", t.view.errorColumns()))
 		for _, resource := range addrs.SetSortedNatural(state.AllManagedResourceInstanceObjectAddrs()) {
 			if resource.DeposedKey != states.NotDeposed {
@@ -321,14 +323,12 @@ func (t *TestHuman) FatalInterruptSummary(run *moduletest.Run, file *moduletest.
 		}
 	}
 
-	// Then print out the other states in order.
-	for _, run := range file.Runs {
-		state, exists := existingStates[run]
-		if !exists || state.Empty() {
+	for key, state := range existingStates {
+		if key == configs.TestMainStateIdentifier || state.Empty() {
 			continue
 		}
 
-		t.view.streams.Eprint(format.WordWrap(fmt.Sprintf("\nTerraform has already created the following resources for %q from %q:\n", run.Name, run.Config.Module.Source), t.view.errorColumns()))
+		t.view.streams.Eprint(format.WordWrap(fmt.Sprintf("\nTerraform has already created the following resources for %q:\n", key), t.view.errorColumns()))
 		for _, resource := range addrs.SetSortedNatural(state.AllManagedResourceInstanceObjectAddrs()) {
 			if resource.DeposedKey != states.NotDeposed {
 				t.view.streams.Eprintf("  - %s (%s)\n", resource.ResourceInstance, resource.DeposedKey)
@@ -448,11 +448,15 @@ func (t *TestJSON) Conclusion(suite *moduletest.Suite) {
 			message.WriteString("Failure!")
 		}
 
-		message.WriteString(fmt.Sprintf(" %d passed, %d failed", summary.Passed, summary.Failed+summary.Errored))
-		if summary.Skipped > 0 {
-			message.WriteString(fmt.Sprintf(", %d skipped.", summary.Skipped))
-		} else {
-			message.WriteString(".")
+		if suite.CommandMode != moduletest.CleanupMode {
+			// don't print test summaries during cleanup mode.
+
+			message.WriteString(fmt.Sprintf(" %d passed, %d failed", summary.Passed, summary.Failed+summary.Errored))
+			if summary.Skipped > 0 {
+				message.WriteString(fmt.Sprintf(", %d skipped.", summary.Skipped))
+			} else {
+				message.WriteString(".")
+			}
 		}
 	}
 
@@ -575,7 +579,7 @@ func (t *TestJSON) Run(run *moduletest.Run, file *moduletest.File, progress modu
 					"@testrun", run.Name)
 			}
 		} else {
-			outputs, changed, drift, attrs, err := jsonplan.MarshalForRenderer(run.Verbose.Plan, schemas)
+			outputs, changed, drift, attrs, actions, err := jsonplan.MarshalForRenderer(run.Verbose.Plan, schemas)
 			if err != nil {
 				run.Diagnostics = run.Diagnostics.Append(tfdiags.Sourceless(
 					tfdiags.Warning,
@@ -590,6 +594,7 @@ func (t *TestJSON) Run(run *moduletest.Run, file *moduletest.File, progress modu
 					ResourceDrift:         drift,
 					ProviderSchemas:       jsonprovider.MarshalForRenderer(schemas),
 					RelevantAttributes:    attrs,
+					ActionInvocations:     actions,
 				}
 
 				t.view.log.Info(
@@ -606,7 +611,8 @@ func (t *TestJSON) Run(run *moduletest.Run, file *moduletest.File, progress modu
 }
 
 func (t *TestJSON) DestroySummary(diags tfdiags.Diagnostics, run *moduletest.Run, file *moduletest.File, state *states.State) {
-	if state.HasManagedResourceInstanceObjects() {
+	skipCleanup := run != nil && run.Config.SkipCleanup
+	if state.HasManagedResourceInstanceObjects() && !skipCleanup {
 		cleanup := json.TestFileCleanup{}
 		for _, resource := range addrs.SetSortedNatural(state.AllManagedResourceInstanceObjectAddrs()) {
 			cleanup.FailedResources = append(cleanup.FailedResources, json.TestFailedResource{
@@ -654,13 +660,13 @@ func (t *TestJSON) FatalInterrupt() {
 	t.view.Log(fatalInterrupt)
 }
 
-func (t *TestJSON) FatalInterruptSummary(run *moduletest.Run, file *moduletest.File, existingStates map[*moduletest.Run]*states.State, created []*plans.ResourceInstanceChangeSrc) {
+func (t *TestJSON) FatalInterruptSummary(run *moduletest.Run, file *moduletest.File, existingStates map[string]*states.State, created []*plans.ResourceInstanceChangeSrc) {
 
 	message := json.TestFatalInterrupt{
 		States: make(map[string][]json.TestFailedResource),
 	}
 
-	for run, state := range existingStates {
+	for key, state := range existingStates {
 		if state.Empty() {
 			continue
 		}
@@ -673,10 +679,10 @@ func (t *TestJSON) FatalInterruptSummary(run *moduletest.Run, file *moduletest.F
 			})
 		}
 
-		if run == nil {
+		if key == configs.TestMainStateIdentifier {
 			message.State = resources
 		} else {
-			message.States[run.Name] = resources
+			message.States[key] = resources
 		}
 	}
 
@@ -733,311 +739,6 @@ func (t *TestJSON) TFCRetryHook(attemptNum int, resp *http.Response) {
 		t.RetryLogHook(attemptNum, resp, false),
 		"type", json.MessageTestRetry,
 	)
-}
-
-// TestJUnitXMLFile produces a JUnit XML file at the conclusion of a test
-// run, summarizing the outcome of the test in a form that can then be
-// interpreted by tools which render JUnit XML result reports.
-//
-// The de-facto convention for JUnit XML is for it to be emitted as a separate
-// file as a complement to human-oriented output, rather than _instead of_
-// human-oriented output, and so this view meets that expectation by creating
-// a new file only once the test run has completed, at the "Conclusion" event.
-// If that event isn't reached for any reason then no file will be created at
-// all, which JUnit XML-consuming tools tend to expect as an outcome of a
-// catastrophically-errored test suite.
-//
-// Views cannot return errors directly from their events, so if this view fails
-// to create or write to the designated file when asked to report the conclusion
-// it will save the error as part of its state, accessible from method
-// [TestJUnitXMLFile.Err].
-//
-// This view is intended only for use in conjunction with another view that
-// provides the streaming output of ongoing testing events, so it should
-// typically be wrapped in a [TestMulti] along with either [TestHuman] or
-// [TestJSON].
-type TestJUnitXMLFile struct {
-	filename string
-	err      error
-}
-
-var _ Test = (*TestJUnitXMLFile)(nil)
-
-// NewTestJUnitXML returns a [Test] implementation that will, when asked to
-// report "conclusion", write a JUnit XML report to the given filename.
-//
-// If the file already exists then this view will silently overwrite it at the
-// point of being asked to write a conclusion. Otherwise it will create the
-// file at that time. If creating or overwriting the file fails, a subsequent
-// call to method Err will return information about the problem.
-func NewTestJUnitXMLFile(filename string) *TestJUnitXMLFile {
-	return &TestJUnitXMLFile{
-		filename: filename,
-	}
-}
-
-// Err returns an error that the receiver previously encountered when trying
-// to handle the Conclusion event by creating and writing into a file.
-//
-// Returns nil if either there was no error or if this object hasn't yet been
-// asked to report a conclusion.
-func (v *TestJUnitXMLFile) Err() error {
-	return v.err
-}
-
-func (v *TestJUnitXMLFile) Abstract(suite *moduletest.Suite) {}
-
-func (v *TestJUnitXMLFile) Conclusion(suite *moduletest.Suite) {
-	xmlSrc, err := junitXMLTestReport(suite)
-	if err != nil {
-		v.err = err
-		return
-	}
-	err = os.WriteFile(v.filename, xmlSrc, 0660)
-	if err != nil {
-		v.err = err
-		return
-	}
-}
-
-func (v *TestJUnitXMLFile) File(file *moduletest.File, progress moduletest.Progress) {}
-
-func (v *TestJUnitXMLFile) Run(run *moduletest.Run, file *moduletest.File, progress moduletest.Progress, elapsed int64) {
-}
-
-func (v *TestJUnitXMLFile) DestroySummary(diags tfdiags.Diagnostics, run *moduletest.Run, file *moduletest.File, state *states.State) {
-}
-
-func (v *TestJUnitXMLFile) Diagnostics(run *moduletest.Run, file *moduletest.File, diags tfdiags.Diagnostics) {
-}
-
-func (v *TestJUnitXMLFile) Interrupted() {}
-
-func (v *TestJUnitXMLFile) FatalInterrupt() {}
-
-func (v *TestJUnitXMLFile) FatalInterruptSummary(run *moduletest.Run, file *moduletest.File, states map[*moduletest.Run]*states.State, created []*plans.ResourceInstanceChangeSrc) {
-}
-
-func (v *TestJUnitXMLFile) TFCStatusUpdate(status tfe.TestRunStatus, elapsed time.Duration) {}
-
-func (v *TestJUnitXMLFile) TFCRetryHook(attemptNum int, resp *http.Response) {}
-
-func junitXMLTestReport(suite *moduletest.Suite) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := xml.NewEncoder(&buf)
-	enc.EncodeToken(xml.ProcInst{
-		Target: "xml",
-		Inst:   []byte(`version="1.0" encoding="UTF-8"`),
-	})
-	enc.Indent("", "  ")
-
-	// Some common element/attribute names we'll use repeatedly below.
-	suitesName := xml.Name{Local: "testsuites"}
-	suiteName := xml.Name{Local: "testsuite"}
-	caseName := xml.Name{Local: "testcase"}
-	nameName := xml.Name{Local: "name"}
-	testsName := xml.Name{Local: "tests"}
-	skippedName := xml.Name{Local: "skipped"}
-	failuresName := xml.Name{Local: "failures"}
-	errorsName := xml.Name{Local: "errors"}
-
-	enc.EncodeToken(xml.StartElement{Name: suitesName})
-	for _, file := range suite.Files {
-		// Each test file is modelled as a "test suite".
-
-		// First we'll count the number of tests and number of failures/errors
-		// for the suite-level summary.
-		totalTests := len(file.Runs)
-		totalFails := 0
-		totalErrs := 0
-		totalSkipped := 0
-		for _, run := range file.Runs {
-			switch run.Status {
-			case moduletest.Skip:
-				totalSkipped++
-			case moduletest.Fail:
-				totalFails++
-			case moduletest.Error:
-				totalErrs++
-			}
-		}
-		enc.EncodeToken(xml.StartElement{
-			Name: suiteName,
-			Attr: []xml.Attr{
-				{Name: nameName, Value: file.Name},
-				{Name: testsName, Value: strconv.Itoa(totalTests)},
-				{Name: skippedName, Value: strconv.Itoa(totalSkipped)},
-				{Name: failuresName, Value: strconv.Itoa(totalFails)},
-				{Name: errorsName, Value: strconv.Itoa(totalErrs)},
-			},
-		})
-
-		for _, run := range file.Runs {
-			// Each run is a "test case".
-
-			type WithMessage struct {
-				Message string `xml:"message,attr,omitempty"`
-				Body    string `xml:",cdata"`
-			}
-			type TestCase struct {
-				Name      string       `xml:"name,attr"`
-				Classname string       `xml:"classname,attr"`
-				Skipped   *WithMessage `xml:"skipped,omitempty"`
-				Failure   *WithMessage `xml:"failure,omitempty"`
-				Error     *WithMessage `xml:"error,omitempty"`
-				Stderr    *WithMessage `xml:"system-err,omitempty"`
-
-				// RunTime is the time spent executing the run associated
-				// with this test case, in seconds with the fractional component
-				// representing partial seconds.
-				//
-				// We assume here that it's not practically possible for an
-				// execution to take literally zero fractional seconds at
-				// the accuracy we're using here (nanoseconds converted into
-				// floating point seconds) and so use zero to represent
-				// "not known", and thus omit that case. (In practice many
-				// JUnit XML consumers treat the absense of this attribute
-				// as zero anyway.)
-				RunTime float64 `xml:"time,attr,omitempty"`
-			}
-
-			testCase := TestCase{
-				Name: run.Name,
-
-				// We treat the test scenario filename as the "class name",
-				// implying that the run name is the "method name", just
-				// because that seems to inspire more useful rendering in
-				// some consumers of JUnit XML that were designed for
-				// Java-shaped languages.
-				Classname: file.Name,
-			}
-			if execMeta := run.ExecutionMeta; execMeta != nil {
-				testCase.RunTime = execMeta.Duration.Seconds()
-			}
-			switch run.Status {
-			case moduletest.Skip:
-				testCase.Skipped = &WithMessage{
-					// FIXME: Is there something useful we could say here about
-					// why the test was skipped?
-				}
-			case moduletest.Fail:
-				testCase.Failure = &WithMessage{
-					Message: "Test run failed",
-					// FIXME: What's a useful thing to report in the body
-					// here? A summary of the statuses from all of the
-					// checkable objects in the configuration?
-				}
-			case moduletest.Error:
-				var diagsStr strings.Builder
-				for _, diag := range run.Diagnostics {
-					// FIXME: Pass in the sources so that these diagnostics
-					// can include source snippets when appropriate.
-					diagsStr.WriteString(format.DiagnosticPlain(diag, nil, 80))
-				}
-				testCase.Error = &WithMessage{
-					Message: "Encountered an error",
-					Body:    diagsStr.String(),
-				}
-			}
-			if len(run.Diagnostics) != 0 && testCase.Error == nil {
-				// If we have diagnostics but the outcome wasn't an error
-				// then we're presumably holding diagnostics that didn't
-				// cause the test to error, such as warnings. We'll place
-				// those into the "system-err" element instead, so that
-				// they'll be reported _somewhere_ at least.
-				var diagsStr strings.Builder
-				for _, diag := range run.Diagnostics {
-					// FIXME: Pass in the sources so that these diagnostics
-					// can include source snippets when appropriate.
-					diagsStr.WriteString(format.DiagnosticPlain(diag, nil, 80))
-				}
-				testCase.Stderr = &WithMessage{
-					Body: diagsStr.String(),
-				}
-			}
-			enc.EncodeElement(&testCase, xml.StartElement{
-				Name: caseName,
-			})
-		}
-
-		enc.EncodeToken(xml.EndElement{Name: suiteName})
-	}
-	enc.EncodeToken(xml.EndElement{Name: suitesName})
-	enc.Close()
-	return buf.Bytes(), nil
-}
-
-// TestMulti is an fan-out adapter which delegates all calls to all of the
-// wrapped test views, for situations where multiple outputs are needed at
-// the same time.
-type TestMulti []Test
-
-var _ Test = TestMulti(nil)
-
-func (m TestMulti) Abstract(suite *moduletest.Suite) {
-	for _, wrapped := range m {
-		wrapped.Abstract(suite)
-	}
-}
-
-func (m TestMulti) Conclusion(suite *moduletest.Suite) {
-	for _, wrapped := range m {
-		wrapped.Conclusion(suite)
-	}
-}
-
-func (m TestMulti) File(file *moduletest.File, progress moduletest.Progress) {
-	for _, wrapped := range m {
-		wrapped.File(file, progress)
-	}
-}
-
-func (m TestMulti) Run(run *moduletest.Run, file *moduletest.File, progress moduletest.Progress, elapsed int64) {
-	for _, wrapped := range m {
-		wrapped.Run(run, file, progress, elapsed)
-	}
-}
-
-func (m TestMulti) DestroySummary(diags tfdiags.Diagnostics, run *moduletest.Run, file *moduletest.File, state *states.State) {
-	for _, wrapped := range m {
-		wrapped.DestroySummary(diags, run, file, state)
-	}
-}
-
-func (m TestMulti) Diagnostics(run *moduletest.Run, file *moduletest.File, diags tfdiags.Diagnostics) {
-	for _, wrapped := range m {
-		wrapped.Diagnostics(run, file, diags)
-	}
-}
-
-func (m TestMulti) Interrupted() {
-	for _, wrapped := range m {
-		wrapped.Interrupted()
-	}
-}
-
-func (m TestMulti) FatalInterrupt() {
-	for _, wrapped := range m {
-		wrapped.FatalInterrupt()
-	}
-}
-
-func (m TestMulti) FatalInterruptSummary(run *moduletest.Run, file *moduletest.File, states map[*moduletest.Run]*states.State, created []*plans.ResourceInstanceChangeSrc) {
-	for _, wrapped := range m {
-		wrapped.FatalInterruptSummary(run, file, states, created)
-	}
-}
-
-func (m TestMulti) TFCStatusUpdate(status tfe.TestRunStatus, elapsed time.Duration) {
-	for _, wrapped := range m {
-		wrapped.TFCStatusUpdate(status, elapsed)
-	}
-}
-
-func (m TestMulti) TFCRetryHook(attemptNum int, resp *http.Response) {
-	for _, wrapped := range m {
-		wrapped.TFCRetryHook(attemptNum, resp)
-	}
 }
 
 func colorizeTestStatus(status moduletest.Status, color *colorstring.Colorize) string {

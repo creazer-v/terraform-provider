@@ -41,10 +41,7 @@ var (
 	_ GraphNodeReferenceable     = (*nodeExpandModuleVariable)(nil)
 	_ GraphNodeReferencer        = (*nodeExpandModuleVariable)(nil)
 	_ graphNodeTemporaryValue    = (*nodeExpandModuleVariable)(nil)
-	_ graphNodeExpandsInstances  = (*nodeExpandModuleVariable)(nil)
 )
-
-func (n *nodeExpandModuleVariable) expandsInstances() {}
 
 func (n *nodeExpandModuleVariable) temporaryValue() bool {
 	return true
@@ -306,7 +303,7 @@ func (n *nodeModuleVariable) evalModuleVariable(ctx EvalContext, validateOnly bo
 		SourceRange: errSourceRange,
 	}
 
-	finalVal, moreDiags := prepareFinalInputVariableValue(n.Addr, rawVal, n.Config)
+	finalVal, moreDiags := PrepareFinalInputVariableValue(n.Addr, rawVal, n.Config)
 	diags = diags.Append(moreDiags)
 
 	return finalVal, diags.ErrWithWarnings()

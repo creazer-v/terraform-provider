@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/hashicorp/hcl/v2"
+
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/instances"
@@ -29,11 +31,9 @@ type NodeApplyableResourceInstance struct {
 
 	graphNodeDeposer // implementation of GraphNodeDeposerConfig
 
-	// forceReplace are resource instance addresses where the user wants to
-	// force generating a replace action. This set isn't pre-filtered, so
-	// it might contain addresses that have nothing to do with the resource
-	// that this node represents, which the node itself must therefore ignore.
-	forceReplace []addrs.AbsResourceInstance
+	// forceReplace indicates that this resource is being replaced for external
+	// reasons, like a -replace flag or via replace_triggered_by.
+	forceReplace bool
 }
 
 var (
@@ -272,13 +272,14 @@ func (n *NodeApplyableResourceInstance) managedResourceExecute(ctx EvalContext) 
 	}
 
 	if deferred != nil {
-		diags = diags.Append(tfdiags.Sourceless(
-			tfdiags.Error,
-			"Resource deferred during apply, but not during plan",
-			fmt.Sprintf(
+		diags = diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Resource deferred during apply, but not during plan",
+			Detail: fmt.Sprintf(
 				"Terraform has encountered a bug where a provider would mark the resource %q as deferred during apply, but not during plan. This is most likely a bug in the provider. Please file an issue with the provider.", n.Addr,
 			),
-		))
+			Subject: n.Config.DeclRange.Ptr(),
+		})
 		return diags
 	}
 
@@ -407,8 +408,8 @@ func (n *NodeApplyableResourceInstance) checkPlannedChange(ctx EvalContext, plan
 	var diags tfdiags.Diagnostics
 	addr := n.ResourceInstanceAddr().Resource
 
-	schema, _ := providerSchema.SchemaForResourceAddr(addr.ContainingResource())
-	if schema == nil {
+	schema := providerSchema.SchemaForResourceAddr(addr.ContainingResource())
+	if schema.Body == nil {
 		// Should be caught during validation, so we don't bother with a pretty error here
 		diags = diags.Append(fmt.Errorf("provider does not support %q", addr.Resource.Type))
 		return diags
@@ -450,7 +451,7 @@ func (n *NodeApplyableResourceInstance) checkPlannedChange(ctx EvalContext, plan
 		}
 	}
 
-	errs := objchange.AssertObjectCompatible(schema, plannedChange.After, actualChange.After)
+	errs := objchange.AssertObjectCompatible(schema.Body, plannedChange.After, actualChange.After)
 	for _, err := range errs {
 		diags = diags.Append(tfdiags.Sourceless(
 			tfdiags.Error,

@@ -4,11 +4,14 @@
 package s3
 
 import (
+	"github.com/google/go-cmp/cmp"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
 
-// diagnosticComparer is a Comparer function for use with cmp.Diff to compare two tfdiags.Diagnostic values
-func diagnosticComparer(l, r tfdiags.Diagnostic) bool {
+var diagnosticComparer cmp.Option = cmp.Comparer(diagnosticComparerS3)
+
+// diagnosticComparerS3 is a Comparer function for use with cmp.Diff to compare two tfdiags.Diagnostic values
+func diagnosticComparerS3(l, r tfdiags.Diagnostic) bool {
 	if l.Severity() != r.Severity() {
 		return false
 	}

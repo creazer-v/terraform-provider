@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform/internal/configs/configschema"
 	"github.com/hashicorp/terraform/internal/providers"
 	proto "github.com/hashicorp/terraform/internal/tfplugin5"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // ConfigSchemaToProto takes a *configschema.Block and converts it to a
@@ -90,10 +91,63 @@ func protoSchemaNestedBlock(name string, b *configschema.NestedBlock) *proto.Sch
 }
 
 // ProtoToProviderSchema takes a proto.Schema and converts it to a providers.Schema.
-func ProtoToProviderSchema(s *proto.Schema) providers.Schema {
+// It takes an optional resource identity schema for resources that support identity.
+func ProtoToProviderSchema(s *proto.Schema, id *proto.ResourceIdentitySchema) providers.Schema {
+	schema := providers.Schema{
+		Version: s.Version,
+		Body:    ProtoToConfigSchema(s.Block),
+	}
+
+	if id != nil {
+		schema.IdentityVersion = id.Version
+		schema.Identity = ProtoToIdentitySchema(id.IdentityAttributes)
+	}
+
+	return schema
+}
+
+func ProtoToActionSchema(s *proto.ActionSchema) providers.ActionSchema {
+	return providers.ActionSchema{
+		ConfigSchema: ProtoToConfigSchema(s.Schema.Block),
+	}
+}
+
+func ProtoToListSchema(s *proto.Schema) providers.Schema {
+	listSchema := ProtoToProviderSchema(s, nil)
+	itemCount := 0
+	// check if the provider has set some attributes/blocks as required.
+	// When yes, then we set minItem = 1, which
+	// validates that the configuration contains a "config" block.
+	for _, attrS := range listSchema.Body.Attributes {
+		if attrS.Required {
+			itemCount = 1
+			break
+		}
+	}
+	for _, block := range listSchema.Body.BlockTypes {
+		if block.MinItems > 0 {
+			itemCount = 1
+			break
+		}
+	}
 	return providers.Schema{
 		Version: s.Version,
-		Block:   ProtoToConfigSchema(s.Block),
+		Body: &configschema.Block{
+			Attributes: map[string]*configschema.Attribute{
+				"data": {
+					Type:     cty.DynamicPseudoType,
+					Computed: true,
+				},
+			},
+			BlockTypes: map[string]*configschema.NestedBlock{
+				"config": {
+					Block:    *listSchema.Body,
+					Nesting:  configschema.NestingSingle,
+					MinItems: itemCount,
+					MaxItems: itemCount,
+				},
+			},
+		},
 	}
 }
 
@@ -187,4 +241,55 @@ func sortedKeys(m interface{}) []string {
 
 	sort.Strings(keys)
 	return keys
+}
+
+func ProtoToIdentitySchema(attributes []*proto.ResourceIdentitySchema_IdentityAttribute) *configschema.Object {
+	obj := &configschema.Object{
+		Attributes: make(map[string]*configschema.Attribute),
+		Nesting:    configschema.NestingSingle,
+	}
+
+	for _, a := range attributes {
+		attr := &configschema.Attribute{
+			Description: a.Description,
+			Required:    a.RequiredForImport,
+			Optional:    a.OptionalForImport,
+		}
+
+		if err := json.Unmarshal(a.Type, &attr.Type); err != nil {
+			panic(err)
+		}
+
+		obj.Attributes[a.Name] = attr
+	}
+
+	return obj
+}
+
+func ResourceIdentitySchemaToProto(b providers.IdentitySchema) *proto.ResourceIdentitySchema {
+	attrs := []*proto.ResourceIdentitySchema_IdentityAttribute{}
+	for _, name := range sortedKeys(b.Body.Attributes) {
+		a := b.Body.Attributes[name]
+
+		attr := &proto.ResourceIdentitySchema_IdentityAttribute{
+			Name:              name,
+			Description:       a.Description,
+			RequiredForImport: a.Required,
+			OptionalForImport: a.Optional,
+		}
+
+		ty, err := json.Marshal(a.Type)
+		if err != nil {
+			panic(err)
+		}
+
+		attr.Type = ty
+
+		attrs = append(attrs, attr)
+	}
+
+	return &proto.ResourceIdentitySchema{
+		Version:            b.Version,
+		IdentityAttributes: attrs,
+	}
 }

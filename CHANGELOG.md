@@ -1,22 +1,51 @@
-## 1.11.0 (Unreleased)
+## 1.15.0 (Unreleased)
+
+
+NEW FEATURES:
+
+* We now produce builds for Windows ARM64 ([#32719](https://github.com/hashicorp/terraform/issues/32719))
+
 
 ENHANCEMENTS:
 
-- `init`: Provider installation will utilise credentials configured in a `.netrc` file for the download and shasum URLs returned by provider registries. ([https://github.com/hashicorp/terraform/pull/35843](35843))
-- New command `modules -json`: Displays a full list of all installed modules in a working directory, including whether each module is currently referenced by the working directory's configuration. ([#35884](https://github.com/hashicorp/terraform/pull/35884), [#36062](https://github.com/hashicorp/terraform/pull/36062))
+* ssh-based provisioner (file + remote-exec): Re-enable support for PowerShell ([#37794](https://github.com/hashicorp/terraform/issues/37794))
+
+* terraform init log timestamps include millisecond precision ([#37818](https://github.com/hashicorp/terraform/issues/37818))
+
+* init: skip dependencies declared in development override. This allows you to use `terraform init` with developer overrides and install dependencies that are not declared in the override file. ([#37884](https://github.com/hashicorp/terraform/issues/37884))
+
+
+BUG FIXES:
+
+* testing: File-level error diagnostics are now included in JUnit XML skipped test elements, ensuring CI/CD pipelines can detect validation failures ([#37801](https://github.com/hashicorp/terraform/issues/37801))
+
+* A refresh-only plan could result in a non-zero exit code with no changes ([#37406](https://github.com/hashicorp/terraform/issues/37406))
+
+* cli: Fixed crash in `terraform show -json` when plan contains ephemeral resources with preconditions or postconditions ([#37834](https://github.com/hashicorp/terraform/issues/37834))
+
+* cli: Fixed `terraform init -json` to properly format all backend configuration messages as JSON instead of plain text ([#37911](https://github.com/hashicorp/terraform/issues/37911))
+
+* `state show`: The `state show` command will now explicitly fail and return code 1 when it fails to render the named resources state ([#37933](https://github.com/hashicorp/terraform/issues/37933))
+
 
 EXPERIMENTS:
 
 Experiments are only enabled in alpha releases of Terraform CLI. The following features are not yet available in stable releases.
 
-- `terraform test` accepts a new option `-junit-xml=FILENAME`. If specified, and if the test configuration is valid enough to begin executing, then Terraform writes a JUnit XML test result report to the given filename, describing similar information as included in the normal test output. ([#34291](https://github.com/hashicorp/terraform/issues/34291))
-- The new command `terraform rpcapi` exposes some Terraform Core functionality through an RPC interface compatible with [`go-plugin`](https://github.com/hashicorp/go-plugin). The exact RPC API exposed here is currently subject to change at any time, because it's here primarily as a vehicle to support the [Terraform Stacks](https://www.hashicorp.com/blog/terraform-stacks-explained) private preview and so will be broken if necessary to respond to feedback from private preview participants, or possibly for other reasons. Do not use this mechanism yet outside of Terraform Stacks private preview.
-- The experimental "deferred actions" feature, enabled by passing the `-allow-deferral` option to `terraform plan`, permits `count` and `for_each` arguments in `module`, `resource`, and `data` blocks to have unknown values and allows providers to react more flexibly to unknown values. This experiment is under active development, and so it's not yet useful to participate in this experiment
+- The experimental "deferred actions" feature, enabled by passing the `-allow-deferral` option to `terraform plan`, permits `count` and `for_each` arguments in `module`, `resource`, and `data` blocks to have unknown values and allows providers to react more flexibly to unknown values.
+- `terraform test cleanup`: The experimental `test cleanup` command. In experimental builds of Terraform, a manifest file and state files for each failed cleanup operation during test operations are saved within the `.terraform` local directory. The `test cleanup` command will attempt to clean up the local state files left behind automatically, without requiring manual intervention.
+- `terraform test`: `backend` blocks and `skip_cleanup` attributes:
+  - Test authors can now specify `backend` blocks within `run` blocks in Terraform Test files. Run blocks with `backend` blocks will load state from the specified backend instead of starting from empty state on every execution. This allows test authors to keep long-running test infrastructure alive between test operations, saving time during regular test operations.
+  - Test authors can now specify `skip_cleanup` attributes within test files and within run blocks. The `skip_cleanup` attribute tells `terraform test` not to clean up state files produced by run blocks with this attribute set to true. The state files for affected run blocks will be written to disk within the `.terraform` directory, where they can then be cleaned up manually using the also experimental `terraform test cleanup` command.
 
 ## Previous Releases
 
 For information on prior major and minor releases, refer to their changelogs:
 
+- [v1.14](https://github.com/hashicorp/terraform/blob/v1.14/CHANGELOG.md)
+- [v1.13](https://github.com/hashicorp/terraform/blob/v1.13/CHANGELOG.md)
+- [v1.12](https://github.com/hashicorp/terraform/blob/v1.12/CHANGELOG.md)
+- [v1.11](https://github.com/hashicorp/terraform/blob/v1.11/CHANGELOG.md)
 - [v1.10](https://github.com/hashicorp/terraform/blob/v1.10/CHANGELOG.md)
 - [v1.9](https://github.com/hashicorp/terraform/blob/v1.9/CHANGELOG.md)
 - [v1.8](https://github.com/hashicorp/terraform/blob/v1.8/CHANGELOG.md)

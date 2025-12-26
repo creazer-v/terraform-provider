@@ -19,7 +19,8 @@ import (
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
 
-// StateMvCommand is a Command implementation that shows a single resource.
+// StateMvCommand is a Command implementation that changes bindings
+// in Terraform state so that existing remote objects bind to new resource instances.
 type StateMvCommand struct {
 	StateMeta
 }
@@ -91,7 +92,8 @@ func (c *StateMvCommand) Run(args []string) int {
 	}
 
 	// Read the from state
-	stateFromMgr, err := c.State()
+	view := arguments.ViewHuman
+	stateFromMgr, err := c.State(view)
 	if err != nil {
 		c.Ui.Error(fmt.Sprintf(errStateLoadingState, err))
 		return 1
@@ -129,7 +131,7 @@ func (c *StateMvCommand) Run(args []string) int {
 		c.statePath = statePathOut
 		c.backupPath = backupPathOut
 
-		stateToMgr, err = c.State()
+		stateToMgr, err = c.State(view)
 		if err != nil {
 			c.Ui.Error(fmt.Sprintf(errStateLoadingState, err))
 			return 1
@@ -390,7 +392,8 @@ func (c *StateMvCommand) Run(args []string) int {
 		return 0 // This is as far as we go in dry-run mode
 	}
 
-	b, backendDiags := c.Backend(nil)
+	// Load the backend
+	b, backendDiags := c.backend(".", view)
 	diags = diags.Append(backendDiags)
 	if backendDiags.HasErrors() {
 		c.showDiagnostics(diags)

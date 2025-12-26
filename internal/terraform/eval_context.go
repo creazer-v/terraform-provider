@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/hashicorp/terraform/internal/actions"
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/checks"
 	"github.com/hashicorp/terraform/internal/configs"
@@ -191,6 +192,10 @@ type EvalContext interface {
 	// perform a planned action due to an upstream dependency being deferred.
 	Deferrals() *deferring.Deferred
 
+	// ClientCapabilities returns the client capabilities sent to the providers
+	// for each request. They define what this terraform instance is capable of.
+	ClientCapabilities() providers.ClientCapabilities
+
 	// MoveResults returns a map describing the results of handling any
 	// resource instance move statements prior to the graph walk, so that
 	// the graph walk can then record that information appropriately in other
@@ -212,6 +217,11 @@ type EvalContext interface {
 	// Forget if set to true will cause the plan to forget all resources. This is
 	// only allowed in the context of a destroy plan.
 	Forget() bool
+
+	// Actions returns the actions object that tracks all of the action
+	// declarations and their instances that are available in this
+	// EvalContext.
+	Actions() *actions.Actions
 }
 
 func evalContextForModuleInstance(baseCtx EvalContext, addr addrs.ModuleInstance) EvalContext {

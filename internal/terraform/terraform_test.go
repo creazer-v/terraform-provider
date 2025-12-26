@@ -89,10 +89,13 @@ func testModuleWithSnapshot(t *testing.T, name string) (*configs.Config, *config
 
 // testModuleInline takes a map of path -> config strings and yields a config
 // structure with those files loaded from disk
-func testModuleInline(t testing.TB, sources map[string]string) *configs.Config {
+func testModuleInline(t testing.TB, sources map[string]string, parserOpts ...configs.Option) *configs.Config {
 	t.Helper()
 
-	cfgPath := t.TempDir()
+	cfgPath, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for path, configStr := range sources {
 		dir := filepath.Dir(path)
@@ -115,7 +118,7 @@ func testModuleInline(t testing.TB, sources map[string]string) *configs.Config {
 		}
 	}
 
-	loader, cleanup := configload.NewLoaderForTests(t)
+	loader, cleanup := configload.NewLoaderForTests(t, parserOpts...)
 	defer cleanup()
 
 	// We need to be able to exercise experimental features in our integration tests.

@@ -4,10 +4,6 @@
 bin/
 modules-dev/
 /pkg/
-website/.vagrant
-website/.bundle
-website/build
-website/node_modules
 .vagrant/
 *.backup
 *.bak
@@ -22,8 +18,11 @@ go.work*
 
 /terraform
 
-website/vendor
 vendor/
 
 # Coverage
 coverage.txt
+
+# IDEs
+.vscode/
+.zed/
